@@ -150,7 +150,3 @@ output/
 logs/
 └── pipeline.log         # appended log of every run
 ```
-
-## Video walkthrough
-
-> 📹 *Recording pending — see [`video_notes.md`](video_notes.md) for the full timed script, screen sequence, and talking points.*

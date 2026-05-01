@@ -21,9 +21,6 @@ dependencies = [
 ]
 
 
-[project.scripts]
-fund-ranking = "src.cli:cli"
-
 [tool.poetry]
 package-mode = false
 
