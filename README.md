@@ -4,6 +4,8 @@ One-command pipeline that sources, scores, and ranks Brazilian CVM-registered
 fixed-income funds against a configurable reference date. Designed to run on a
 weekly cadence in production.
 
+[Video walkthrough](https://www.youtube.com/watch?v=Rynx-ReAG5g)
+
 ## Quick start
 
 ```bash
