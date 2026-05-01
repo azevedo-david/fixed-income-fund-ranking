@@ -1,0 +1,35 @@
+[project]
+name = "fixed-income-fund-ranking"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "David Azevedo",email = "davidazevedo@quartavia.com.br"}
+]
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "python-dotenv (>=1.0,<2.0)",
+    "pandas (==2.3.3)",
+    "numpy (>=2.4.4,<3.0.0)",
+    "requests (>=2.33.1,<3.0.0)",
+    "tqdm (>=4.67.3,<5.0.0)",
+    "pyarrow (>=24.0.0,<25.0.0)",
+    "click (>=8.3.3,<9.0.0)",
+    "matplotlib (>=3.10.9,<4.0.0)",
+    "openpyxl (>=3.1,<4.0)",
+    "pyyaml (>=6.0,<7.0)"
+]
+
+
+[project.scripts]
+fund-ranking = "src.cli:cli"
+
+[tool.poetry]
+package-mode = false
+
+[tool.poetry.group.dev.dependencies]
+ipykernel = "^7.2.0"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
