@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+import shutil
 from datetime import date
 
 from tqdm import tqdm
 
+from ..config import RAW_DIR
 from ..storage import DuckDBWarehouse
 from .anbima_xlsx import fetch_caracteristicas
 from .bcb import fetch_cdi_daily
@@ -28,13 +30,14 @@ def ingest_raw(
     reference_date: date,
     force: bool = False,
 ) -> None:
-    """CLI convenience wrapper — runs all sources in dependency order."""
+    """CLI convenience wrapper — runs all sources in dependency order then cleans up raw files."""
     ingest_registro(db, force)
     ingest_inf_diario(db, reference_date, force)
     ingest_cad_fi_hist(db, force)
     ingest_extrato(db, reference_date, force)
     ingest_cdi(db, reference_date, force)
     ingest_anbima(db, force)
+    ingest_cleanup()
 
 
 def _snapshot_loaded_today(db: DuckDBWarehouse, schema: str, table: str) -> bool:
@@ -127,3 +130,13 @@ def ingest_anbima(db: DuckDBWarehouse, force: bool = False) -> None:
     df = fetch_caracteristicas()
     db.append_snapshot("raw", "anbima_caracteristicas", df, downloaded_at=today)
     logger.info("ingest anbima: done")
+
+
+def ingest_cleanup() -> None:
+    """Delete all downloaded raw files; safe to call after all sources are in DuckDB."""
+    raw_cvm = RAW_DIR / "cvm"
+    if raw_cvm.exists():
+        shutil.rmtree(raw_cvm)
+        logger.info("ingest cleanup: removed %s", raw_cvm)
+    else:
+        logger.info("ingest cleanup: nothing to remove")

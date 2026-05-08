@@ -98,7 +98,21 @@ def fund_ranking_ingest() -> None:
         with DuckDBWarehouse(_db_path()) as db:
             ingest_anbima(db, force=force)
 
-    (registro() >> inf_diario() >> cad_fi_hist() >> extrato() >> cdi() >> anbima())
+    @task()
+    def cleanup() -> None:
+        from src.ingestion.ingest import ingest_cleanup
+
+        ingest_cleanup()
+
+    (
+        registro()
+        >> inf_diario()
+        >> cad_fi_hist()
+        >> extrato()
+        >> cdi()
+        >> anbima()
+        >> cleanup()
+    )
 
 
 fund_ranking_ingest()
