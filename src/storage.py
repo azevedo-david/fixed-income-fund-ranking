@@ -10,9 +10,11 @@ from typing import Generator
 import duckdb
 import pandas as pd
 
+from .schemas import ALL_DDLS
+
 logger = logging.getLogger(__name__)
 
-_SCHEMAS = ("raw", "staging", "marts")
+_SCHEMAS = ("raw", "staging", "marts", "logs")
 
 
 class DuckDBWarehouse:
@@ -22,6 +24,8 @@ class DuckDBWarehouse:
         self._con = duckdb.connect(db_path)
         for schema in _SCHEMAS:
             self._con.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+        for ddl in ALL_DDLS:
+            self._con.execute(ddl)
 
     def __enter__(self) -> DuckDBWarehouse:
         return self
@@ -40,16 +44,19 @@ class DuckDBWarehouse:
         if df.empty:
             return 0
         self._ensure_table(schema, table, df)
-        key_cols = ", ".join(natural_key)
+        cols = self._col_list(schema, table, df)
+        join_pred = " AND ".join(
+            f't."{k}" IS NOT DISTINCT FROM s."{k}"' for k in natural_key
+        )
         self._con.register("_upsert_src", df)
         try:
             with self._transaction():
                 self._con.execute(
-                    f"DELETE FROM {schema}.{table} WHERE ({key_cols}) IN "
-                    f"(SELECT {key_cols} FROM _upsert_src)"
+                    f"DELETE FROM {schema}.{table} t "
+                    f"USING _upsert_src s WHERE {join_pred}"
                 )
                 self._con.execute(
-                    f"INSERT INTO {schema}.{table} SELECT * FROM _upsert_src"
+                    f"INSERT INTO {schema}.{table} ({cols}) SELECT {cols} FROM _upsert_src"
                 )
         finally:
             self._con.unregister("_upsert_src")
@@ -69,10 +76,11 @@ class DuckDBWarehouse:
         df = df.copy()
         df["downloaded_at"] = downloaded_at
         self._ensure_table(schema, table, df)
+        cols = self._col_list(schema, table, df)
         self._con.register("_snapshot_src", df)
         try:
             self._con.execute(
-                f"INSERT INTO {schema}.{table} SELECT * FROM _snapshot_src"
+                f"INSERT INTO {schema}.{table} ({cols}) SELECT {cols} FROM _snapshot_src"
             )
         finally:
             self._con.unregister("_snapshot_src")
@@ -90,6 +98,7 @@ class DuckDBWarehouse:
         if df.empty:
             return 0
         self._ensure_table(schema, table, df)
+        cols = self._col_list(schema, table, df)
         self._con.register("_derived_src", df)
         try:
             with self._transaction():
@@ -98,7 +107,7 @@ class DuckDBWarehouse:
                     [reference_date],
                 )
                 self._con.execute(
-                    f"INSERT INTO {schema}.{table} SELECT * FROM _derived_src"
+                    f"INSERT INTO {schema}.{table} ({cols}) SELECT {cols} FROM _derived_src"
                 )
         finally:
             self._con.unregister("_derived_src")
@@ -137,6 +146,17 @@ class DuckDBWarehouse:
         except Exception:
             self._con.rollback()
             raise
+
+    def _col_list(self, schema: str, table: str, df: pd.DataFrame) -> str:
+        """Quoted column list for INSERT: table columns present in df, in table definition order."""
+        rows = self._con.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position",
+            [schema, table],
+        ).fetchall()
+        table_cols = [r[0] for r in rows]
+        matched = [c for c in table_cols if c in df.columns]
+        return ", ".join(f'"{c}"' for c in matched)
 
     def _ensure_table(self, schema: str, table: str, df: pd.DataFrame) -> None:
         """Create schema.table from df's column schema if it does not already exist."""
