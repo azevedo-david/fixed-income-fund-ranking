@@ -12,7 +12,7 @@
 #   docker compose -f airflow/docker-compose-airflow.yml up -d
 
 x-airflow-common: &airflow-common
-  image: apache/airflow:2.9.1
+  build: .
   environment:
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
@@ -20,19 +20,7 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
     PYTHONPATH: /opt/app
-    # Airflow Variable — read by _db_path() in the DAG at task runtime
     AIRFLOW_VAR_DUCKDB_PATH: /opt/app/data/fund_ranking.duckdb
-    _PIP_ADDITIONAL_REQUIREMENTS: >-
-      pandas==2.3.3
-      numpy>=2.4.4
-      duckdb>=1.5.2
-      requests>=2.33.1
-      tqdm>=4.67.3
-      pyarrow>=24.0.0
-      openpyxl>=3.1
-      pyyaml>=6.0
-      python-dotenv>=1.0
-      click>=8.3.3
   volumes:
     - ../:/opt/app                  # project root → DAG can import from src.*
     - ./dags:/opt/airflow/dags      # DAG files picked up by scheduler
@@ -58,12 +46,7 @@ services:
 
   airflow-init:
     <<: *airflow-common
-    command: >
-      bash -c "airflow db migrate &&
-               airflow users create
-                 --username airflow --password airflow
-                 --firstname Admin --lastname User
-                 --role Admin --email admin@example.com"
+    command: bash -c "airflow db migrate && airflow users create --username airflow --password airflow --firstname Admin --lastname User --role Admin --email admin@example.com"
     restart: "no"
 
   airflow-webserver:
