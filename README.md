@@ -51,12 +51,6 @@ This file is not auto-fetched because the ANBIMA public portal requires a browse
 session. Once placed, the pipeline caches it as Parquet and re-reads from cache on
 every subsequent run.
 
-> **ANBIMA API alternative:** ANBIMA exposes the same data via a REST API
-> (`api.anbima.com.br/feed/fundos/v2`). With OAuth2 credentials the xlsx download
-> step can be fully automated — see `src/ingestion/anbima_xlsx.py` for the
-> integration point. Credentials go in `.env` as `ANBIMA_CLIENT_ID` /
-> `ANBIMA_CLIENT_SECRET`.
-
 ### Install and run
 
 ```bash
@@ -115,7 +109,7 @@ The pipeline is stateless and config-driven. A minimal weekly cron:
 For a fully automated daily run with no human in the loop:
 
 1. Schedule the cron above (runs after CVM publishes monthly inf_diario files).
-2. Automate the ANBIMA xlsx refresh via the REST API (replace the manual download).
+2. Refresh the ANBIMA xlsx manually (see Prerequisites above) before each run.
 3. Leave `reference_date: null` in `config.yaml` so the pipeline always ranks
    against today's date.
 

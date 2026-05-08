@@ -22,8 +22,6 @@ OUTPUT_DIR = PROJECT_ROOT / "output"
 LOGS_DIR = PROJECT_ROOT / "logs"
 
 CVM_BASE_URL = "https://dados.cvm.gov.br/dados/FI"
-ANBIMA_BASE_URL = "https://api.anbima.com.br/feed/fundos/v2"
-ANBIMA_TOKEN_URL = "https://api.anbima.com.br/oauth/access-token"
 BCB_SGS_URL = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.12/dados"
 
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config.yaml"
@@ -94,9 +92,6 @@ class Settings:
     rankings: list[RankingCombo]
     top_n: int
     output: OutputConfig
-
-    anbima_client_id: str | None = None
-    anbima_client_secret: str | None = None
 
     @property
     def max_window_months(self) -> int:
@@ -177,8 +172,6 @@ class Settings:
             rankings=[RankingCombo(**r) for r in cfg["rankings"]],
             top_n=int(cfg["top_n"]),
             output=output,
-            anbima_client_id=os.getenv("ANBIMA_CLIENT_ID") or None,
-            anbima_client_secret=os.getenv("ANBIMA_CLIENT_SECRET") or None,
         )
 
 
