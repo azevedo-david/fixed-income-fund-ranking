@@ -11,23 +11,25 @@ from pathlib import Path
 from src.config import LOGS_DIR, Settings
 from src.compute.metrics import build_metrics
 from src.compute.publish import build_payload, local_json_sink, publish
+from src.compute.ranking import rank_all
 from src.compute.report import generate_report
 from src.compute.universe import build_universe
 
-_fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
-logging.basicConfig(level=logging.INFO, format=_fmt)
-
-LOGS_DIR.mkdir(parents=True, exist_ok=True)
-_file_handler = logging.FileHandler(
-    LOGS_DIR / "pipeline.log", mode="a", encoding="utf-8"
-)
-_file_handler.setFormatter(logging.Formatter(_fmt))
-logging.getLogger().addHandler(_file_handler)
-
 logger = logging.getLogger(__name__)
+
+_FMT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+
+
+def _setup_logging() -> None:
+    logging.basicConfig(level=logging.INFO, format=_FMT)
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    handler = logging.FileHandler(LOGS_DIR / "pipeline.log", mode="a", encoding="utf-8")
+    handler.setFormatter(logging.Formatter(_FMT))
+    logging.getLogger().addHandler(handler)
 
 
 def main() -> None:
+    _setup_logging()
     parser = argparse.ArgumentParser(description="Fixed Income Fund Ranking pipeline.")
     parser.add_argument(
         "--force",
@@ -76,9 +78,10 @@ def main() -> None:
         metrics_df.shape[1],
     )
 
-    generate_report(metrics_df, settings)
+    rankings = rank_all(metrics_df, settings)
+    generate_report(rankings, len(metrics_df), settings)
 
-    payload = build_payload(metrics_df, settings)
+    payload = build_payload(rankings, len(metrics_df), settings)
     publish(payload, sinks=[local_json_sink(settings.output.ranking_json)])
 
     for seg in payload["segments"]:

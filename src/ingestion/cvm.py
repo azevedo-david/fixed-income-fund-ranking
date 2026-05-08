@@ -27,9 +27,9 @@ CVM_RAW = RAW_DIR / "cvm"
 CVM_PROCESSED = PROCESSED_DIR / "cvm"
 
 
-def fmt_cnpj(value: str) -> str:
-    """Format a raw 14-digit CNPJ string to XX.XXX.XXX/XXXX-XX."""
-    d = value.strip().zfill(14)
+def fmt_cnpj(value: str | int) -> str:
+    """Format any CNPJ value (raw digits, integer, or already-formatted) to XX.XXX.XXX/XXXX-XX."""
+    d = "".join(c for c in str(value) if c.isdigit()).zfill(14)
     return f"{d[:2]}.{d[2:5]}.{d[5:8]}/{d[8:12]}-{d[12:]}"
 
 
@@ -110,9 +110,7 @@ def fetch_inf_diario(
         _keys_cnpjs = {c for c, _ in universe_keys}
         _keys_set = {(c, s if s is not None else "") for c, s in universe_keys}
 
-    from datetime import date as _date
-
-    current_ym = _date.today().strftime("%Y%m")
+    current_ym = date.today().strftime("%Y%m")
     keep_cols = [
         "TP_FUNDO_CLASSE",
         "CNPJ_FUNDO_CLASSE",
@@ -267,12 +265,10 @@ def load_inf_diario(
 
 def fetch_extrato(year: int, force: bool = False) -> pd.DataFrame:
     """Download the annual extrato_fi CSV for the given year."""
-    from datetime import date as _date
-
     _ensure_cvm_dirs()
     url = f"{CVM_BASE_URL}/DOC/EXTRATO/DADOS/extrato_fi_{year}.csv"
 
-    if year == _date.today().year:
+    if year == date.today().year:
         stem = f"extrato_fi_{year}"
         path = snapshot_path(CVM_RAW, stem, ".csv")
         download(url, path, force=force)
@@ -323,12 +319,8 @@ def load_cad_fi_taxa(force: bool = False) -> pd.DataFrame:
     members = ["cad_fi_hist_taxa_adm", "cad_fi_hist_taxa_perfm"]
     tables = fetch_cad_fi_hist(members=members, force=force)
 
-    def _to_formatted_cnpj(value) -> str:
-        digits = "".join(c for c in str(value) if c.isdigit())
-        return fmt_cnpj(digits)
-
     adm_raw = tables["cad_fi_hist_taxa_adm"].copy()
-    adm_raw["CNPJ_FUNDO_CLASSE"] = adm_raw["CNPJ_FUNDO"].map(_to_formatted_cnpj)
+    adm_raw["CNPJ_FUNDO_CLASSE"] = adm_raw["CNPJ_FUNDO"].map(fmt_cnpj)
     adm_raw["DT_INI_TAXA_ADM"] = pd.to_datetime(
         adm_raw["DT_INI_TAXA_ADM"], errors="coerce"
     )
@@ -341,7 +333,7 @@ def load_cad_fi_taxa(force: bool = False) -> pd.DataFrame:
     )
 
     perf_raw = tables["cad_fi_hist_taxa_perfm"].copy()
-    perf_raw["CNPJ_FUNDO_CLASSE"] = perf_raw["CNPJ_FUNDO"].map(_to_formatted_cnpj)
+    perf_raw["CNPJ_FUNDO_CLASSE"] = perf_raw["CNPJ_FUNDO"].map(fmt_cnpj)
     perf_raw["DT_INI_TAXA_PERFM"] = pd.to_datetime(
         perf_raw["DT_INI_TAXA_PERFM"], errors="coerce"
     )
@@ -378,11 +370,9 @@ def load_extrato_taxa(year: int, force: bool = False) -> pd.DataFrame:
 
     Output columns: CNPJ_FUNDO_CLASSE (formatted), adm_fee (float), has_perf_fee (bool).
     """
-    from datetime import date as _date
-
     _ensure_cvm_dirs()
     stem = f"extrato_taxa_{year}"
-    if year == _date.today().year:
+    if year == date.today().year:
         cache = snapshot_path(CVM_PROCESSED, stem, ".parquet")
     else:
         cache = CVM_PROCESSED / f"{stem}.parquet"
@@ -406,6 +396,6 @@ def load_extrato_taxa(year: int, force: bool = False) -> pd.DataFrame:
 
     cache.parent.mkdir(parents=True, exist_ok=True)
     out.to_parquet(cache, index=False)
-    if year == _date.today().year:
+    if year == date.today().year:
         purge_old_snapshots(CVM_PROCESSED, stem, ".parquet", keep=cache)
     return out

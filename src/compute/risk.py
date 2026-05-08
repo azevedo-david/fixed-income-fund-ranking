@@ -1,17 +1,12 @@
-"""Risk metrics on indexed daily returns.
-
-All functions take a DataFrame ``ri`` indexed on
-(CNPJ_FUNDO_CLASSE, ID_SUBCLASSE, DT_COMPTC) with at least ``return_daily``,
-``excess_daily`` and ``VL_QUOTA`` columns, and return a Series/DataFrame
-indexed on (CNPJ_FUNDO_CLASSE, ID_SUBCLASSE).
-"""
+"""Risk metrics on indexed daily returns."""
 
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
 
-GROUP_KEY = ["cnpj", "subclass_id"]
+from .returns import GROUP_KEY
+
 PERIODS_PER_YEAR = 252
 
 

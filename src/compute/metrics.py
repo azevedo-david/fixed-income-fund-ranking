@@ -11,6 +11,7 @@ from ..config import Settings
 from ..ingestion.bcb import fetch_cdi_daily
 from ..ingestion.cvm import load_inf_diario
 from .returns import (
+    GROUP_KEY,
     annualized_return,
     cdi_window_returns,
     daily_returns,
@@ -21,8 +22,6 @@ from .returns import (
 from .risk import max_drawdown, volatility_and_sharpe
 
 logger = logging.getLogger(__name__)
-
-GROUP_KEY = ["cnpj", "subclass_id"]
 
 # Sentinel string used while computing on the (cnpj, subclass_id, date)
 # MultiIndex: NaN ≠ NaN in MultiIndex equality, which corrupts joins/concats.
@@ -233,7 +232,6 @@ def build_metrics(
             universe["subclass_id"].where(universe["subclass_id"].notna(), None),
         )
     )
-    # 1. Daily quotes for the full window
     logger.info(
         "metrics: loading daily quotes for %d funds (%s → %s)",
         len(universe_keys),
@@ -257,7 +255,6 @@ def build_metrics(
     )
     daily = daily_returns(inf)
 
-    # 2. CDI: cover a couple of months of buffer for trailing-window margins
     cdi = fetch_cdi_daily(
         start=pd.Timestamp(settings.quotes_start) - pd.DateOffset(months=2),
         end=pd.Timestamp(settings.quotes_end),
@@ -265,7 +262,6 @@ def build_metrics(
         force=force,
     )
 
-    # 3. Index, align, span filter
     ri = _build_indexed_returns(daily, cdi)
     ri = filter_min_span(ri, settings.universe.min_span_days)
     n_kept = ri.index.droplevel("date").unique().shape[0]
@@ -277,15 +273,12 @@ def build_metrics(
         settings.universe.min_span_days,
     )
 
-    # 4. Per-fund metrics
     metrics = _compute_per_fund_metrics(ri, cdi, settings)
 
-    # 5. CDI windows + annualised (used by the tax layer)
     ref = pd.Timestamp(settings.reference_date)
     cdi_window = cdi_window_returns(cdi, ref, settings.windows)
     cdi_annual = _cdi_annualised(cdi, ref)
 
-    # 6. Merge universe metadata (one row per fund, sentinel-based join)
     df = metrics.reset_index()
     meta_cols = [
         "cnpj",
@@ -306,7 +299,6 @@ def build_metrics(
     df = df.merge(meta, on=GROUP_KEY, how="left")
     df["subclass_id"] = df["subclass_id"].replace(_SUB_SENTINEL, np.nan)
 
-    # 7. Tax layer + investor level
     df = _apply_tax_layer(df, cdi_window, cdi_annual, settings)
     df["investor_level"] = map_investor_level(df["target_investor"])
 

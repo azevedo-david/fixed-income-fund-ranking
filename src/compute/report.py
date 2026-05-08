@@ -11,8 +11,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from ..config import Settings
-from .ranking import rank_funds
+from ..config import RankingCombo, Settings
 
 logger = logging.getLogger(__name__)
 
@@ -178,25 +177,23 @@ def _md_table(ranked: pd.DataFrame, top_n: int) -> str:
     return "\n".join(rows)
 
 
-def generate_report(metrics_df: pd.DataFrame, settings: Settings) -> str:
-    """Rank funds for every combo in ``settings.rankings`` and write ranking.md.
-
-    Returns the markdown string (also written to ``settings.output.ranking_md``).
-    """
+def generate_report(
+    rankings: list[tuple[RankingCombo, pd.DataFrame]],
+    universe_size: int,
+    settings: Settings,
+) -> str:
+    """Write ranking.md from pre-ranked data; returns the markdown string."""
     ref = str(settings.reference_date)
     lines: list[str] = [
         f"# Fixed Income Fund Ranking — {ref}",
         "",
-        f"> Reference date: **{ref}**  ·  Universe: **{len(metrics_df)} funds**",
+        f"> Reference date: **{ref}**  ·  Universe: **{universe_size} funds**",
         "",
     ]
     lines += _methodology_section(settings)
     lines += ["## Rankings", ""]
 
-    for combo in settings.rankings:
-        ranked = rank_funds(
-            metrics_df, combo.purpose, settings, combo.profile, combo.investor_type
-        )
+    for combo, ranked in rankings:
         purpose_lbl = _PURPOSE_LABEL.get(combo.purpose, combo.purpose.title())
         profile_lbl = _PROFILE_LABEL.get(combo.profile, combo.profile.title())
         investor_lbl = _INVESTOR_LABEL.get(

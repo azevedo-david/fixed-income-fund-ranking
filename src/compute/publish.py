@@ -9,12 +9,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, TypedDict
 
-logger = logging.getLogger(__name__)
-
 import pandas as pd
 
-from ..config import Settings
-from .ranking import rank_funds
+from ..config import RankingCombo, Settings
+
+logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = "1.1"
 
@@ -81,18 +80,19 @@ def _fund_entry(rank: int, cnpj: str, subclass_id: Any, row: pd.Series) -> FundE
     )
 
 
-def build_payload(metrics_df: pd.DataFrame, settings: Settings) -> RankingPayload:
-    """Build the canonical ``RankingPayload`` from ``metrics_df``.
+def build_payload(
+    rankings: list[tuple[RankingCombo, pd.DataFrame]],
+    universe_size: int,
+    settings: Settings,
+) -> RankingPayload:
+    """Build the canonical ``RankingPayload`` from pre-ranked data.
 
     This is the single authoritative representation of the ranking result.
     All sinks consume this dict — never raw DataFrames.
     """
     segments: list[SegmentResult] = []
 
-    for combo in settings.rankings:
-        ranked = rank_funds(
-            metrics_df, combo.purpose, settings, combo.profile, combo.investor_type
-        )
+    for combo, ranked in rankings:
         funds: list[FundEntry] = []
         for rank_i, (idx, row) in enumerate(ranked.head(settings.top_n).iterrows(), 1):
             cnpj, subclass_id = idx
@@ -112,7 +112,7 @@ def build_payload(metrics_df: pd.DataFrame, settings: Settings) -> RankingPayloa
         schema_version=SCHEMA_VERSION,
         generated_at=datetime.now(timezone.utc).isoformat(),
         reference_date=str(settings.reference_date),
-        universe_size=len(metrics_df),
+        universe_size=universe_size,
         segments=segments,
     )
 

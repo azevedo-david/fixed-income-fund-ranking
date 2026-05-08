@@ -143,14 +143,13 @@ def enrich_with_fees(
 def _aggregate_aum_holders(
     df_clean: pd.DataFrame,
     reference_date: pd.Timestamp,
-    aum_lookback_days: int,
+    window_start: pd.Timestamp,
 ) -> pd.DataFrame:
     """Aggregate median PL and holders per (CNPJ, ID_SUBCLASSE) over the lookback window.
 
     NR_COTST=0 with PL>0 is masked as NaN — a known CVM data error.
     """
     df = df_clean.copy()
-    window_start = reference_date - pd.Timedelta(days=aum_lookback_days)
     df = df[(df["DT_COMPTC"] >= window_start) & (df["DT_COMPTC"] <= reference_date)]
 
     bad_holders = (df["NR_COTST"] == 0) & (df["VL_PATRIM_LIQ"] > 0)
@@ -180,18 +179,22 @@ def enrich_with_aum_holders(
         )
     )
 
+    reference_date = pd.Timestamp(settings.reference_date)
+    window_start = reference_date - pd.Timedelta(
+        days=settings.universe.aum_lookback_days
+    )
+
     inf_diario = load_inf_diario(
-        start=settings.reference_date
-        - pd.Timedelta(days=settings.universe.aum_lookback_days),
-        end=settings.reference_date,
+        start=window_start,
+        end=reference_date,
         universe_keys=universe_keys,
         force=force,
     )
 
     agg = _aggregate_aum_holders(
         inf_diario,
-        reference_date=pd.Timestamp(settings.reference_date),
-        aum_lookback_days=settings.universe.aum_lookback_days,
+        reference_date=reference_date,
+        window_start=window_start,
     )
 
     enriched = funds_df.merge(

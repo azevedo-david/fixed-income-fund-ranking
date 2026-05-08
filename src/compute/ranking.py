@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from ..config import Settings
+from ..config import RankingCombo, Settings
 
 _INVESTOR_ACCESS = {"retail": 0, "qualified": 1, "professional": 2}
 
@@ -97,3 +97,18 @@ def rank_funds(
     out_cols = _OUT_COLS + extra_score_cols
     out_cols = list(dict.fromkeys(out_cols))  # deduplicate, preserve order
     return eligible[[c for c in out_cols if c in eligible.columns]]
+
+
+def rank_all(
+    metrics_df: pd.DataFrame, settings: Settings
+) -> list[tuple[RankingCombo, pd.DataFrame]]:
+    """Rank funds for every combo in settings.rankings; returns results in definition order."""
+    return [
+        (
+            combo,
+            rank_funds(
+                metrics_df, combo.purpose, settings, combo.profile, combo.investor_type
+            ),
+        )
+        for combo in settings.rankings
+    ]
