@@ -16,6 +16,19 @@ logger = logging.getLogger(__name__)
 CSV_READ_KWARGS = dict(sep=";", encoding="latin-1", low_memory=False)
 
 
+def yyyymm_range(start: _date, end: _date) -> list[str]:
+    """Inclusive list of YYYYMM strings between two dates."""
+    out: list[str] = []
+    y, m = start.year, start.month
+    while (y, m) <= (end.year, end.month):
+        out.append(f"{y:04d}{m:02d}")
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+    return out
+
+
 def today_stamp() -> str:
     """YYYYMMDD string used to version snapshot caches."""
     return _date.today().strftime("%Y%m%d")
