@@ -144,14 +144,18 @@ CREATE TABLE IF NOT EXISTS raw.pipeline_runs (
 
 STAGING_REGISTRO = """\
 CREATE TABLE IF NOT EXISTS staging.registro (
-    CNPJ_FUNDO_CLASSE  VARCHAR NOT NULL,
-    CNPJ_Fundo         VARCHAR,
-    DT_INI_SIT         DATE,
-    DT_INI_ATIV        DATE,
-    SIT                VARCHAR,
-    fund_name          VARCHAR,
-    tp_fundo           VARCHAR,
-    reference_date     DATE    NOT NULL
+    CNPJ_FUNDO_CLASSE    VARCHAR NOT NULL,
+    ID_SUBCLASSE         VARCHAR,
+    fund_name            VARCHAR,
+    dt_inicio            DATE,
+    situacao             VARCHAR,
+    classificacao_anbima VARCHAR,
+    target_investor      VARCHAR,
+    classe_cotas         VARCHAR,
+    forma_condominio     VARCHAR,
+    exclusivo            VARCHAR,
+    previdenciario       VARCHAR,
+    reference_date       DATE    NOT NULL
 )"""
 
 STAGING_INF_DIARIO = """\
