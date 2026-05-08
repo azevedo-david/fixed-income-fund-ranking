@@ -1,6 +1,6 @@
 """Airflow DAG: ingest raw CVM/ANBIMA/BCB data into DuckDB raw.* tables.
 
-Runs on the 1st of each month. Tasks are chained sequentially because DuckDB
+Runs weekly (Monday 6am). Tasks are chained sequentially because DuckDB
 allows only one write connection per file at a time.
 
 Requires Airflow Variable: duckdb_path — absolute path to the .duckdb file.
@@ -20,22 +20,18 @@ def _db_path() -> str:
 
 
 def _reference_date(logical_date: datetime) -> "date":
-    from datetime import date
-
-    # DAG fires on the 1st of each month; ranking reference date is the last
-    # day of the previous month.
-    return logical_date.date().replace(day=1) - timedelta(days=1)
+    return logical_date.date()
 
 
 _DEFAULT_ARGS = {
     "retries": 2,
-    "retry_delay": timedelta(minutes=5),
+    "retry_delay": timedelta(seconds=30),
 }
 
 
 @dag(
     dag_id="fund_ranking_ingest",
-    schedule="0 6 1 * *",
+    schedule="0 6 * * 1",
     start_date=datetime(2025, 1, 1),
     catchup=False,
     default_args=_DEFAULT_ARGS,
