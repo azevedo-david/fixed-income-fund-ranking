@@ -1,4 +1,4 @@
-"""Ingest task: fetch all raw sources and write to raw.* tables in DuckDB."""
+"""Per-source ingest functions for raw.* tables; each maps to one task."""
 
 from __future__ import annotations
 
@@ -28,13 +28,13 @@ def ingest_raw(
     reference_date: date,
     force: bool = False,
 ) -> None:
-    """Download all raw sources and write to raw.* tables; incremental for time-series, snapshot for registry data."""
-    _ingest_registro(db, reference_date, force)
-    _ingest_inf_diario(db, reference_date, force)
-    _ingest_cad_fi_hist(db, reference_date, force)
-    _ingest_extrato(db, reference_date, force)
-    _ingest_cdi(db, reference_date, force)
-    _ingest_anbima(db, reference_date, force)
+    """CLI convenience wrapper — runs all sources in dependency order."""
+    ingest_registro(db, force)
+    ingest_inf_diario(db, reference_date, force)
+    ingest_cad_fi_hist(db, force)
+    ingest_extrato(db, reference_date, force)
+    ingest_cdi(db, reference_date, force)
+    ingest_anbima(db, force)
 
 
 def _snapshot_loaded_today(db: DuckDBWarehouse, schema: str, table: str) -> bool:
@@ -49,7 +49,8 @@ def _snapshot_loaded_today(db: DuckDBWarehouse, schema: str, table: str) -> bool
     return bool(row and row[0] == date.today())
 
 
-def _ingest_registro(db: DuckDBWarehouse, reference_date: date, force: bool) -> None:
+def ingest_registro(db: DuckDBWarehouse, force: bool = False) -> None:
+    """Fetch CVM fund/class registry and append today's snapshot to raw.registro_*."""
     today = date.today()
     if not force and _snapshot_loaded_today(db, "raw", "registro_classe"):
         logger.info("ingest registro: today's snapshot already loaded, skipping")
@@ -61,9 +62,12 @@ def _ingest_registro(db: DuckDBWarehouse, reference_date: date, force: bool) -> 
     logger.info("ingest registro: done")
 
 
-def _ingest_inf_diario(db: DuckDBWarehouse, reference_date: date, force: bool) -> None:
+def ingest_inf_diario(
+    db: DuckDBWarehouse, reference_date: date, force: bool = False
+) -> None:
+    """Incrementally upsert monthly CVM daily-quote files into raw.inf_diario."""
     max_dt = db.get_max_date("raw", "inf_diario", "DT_COMPTC")
-    start = max_dt.date() if max_dt else _HISTORY_START
+    start = max_dt if max_dt else _HISTORY_START
     months = yyyymm_range(start, reference_date)
     for ym in tqdm(months, desc="inf_diario", unit="month"):
         df = fetch_inf_diario_month(ym, force=force)
@@ -77,7 +81,8 @@ def _ingest_inf_diario(db: DuckDBWarehouse, reference_date: date, force: bool) -
     logger.info("ingest inf_diario: %d months", len(months))
 
 
-def _ingest_cad_fi_hist(db: DuckDBWarehouse, reference_date: date, force: bool) -> None:
+def ingest_cad_fi_hist(db: DuckDBWarehouse, force: bool = False) -> None:
+    """Fetch CVM historical fee tables and append today's snapshot to raw.cad_fi_hist_*."""
     today = date.today()
     if not force and _snapshot_loaded_today(db, "raw", "cad_fi_hist_taxa_adm"):
         logger.info("ingest cad_fi_hist: today's snapshot already loaded, skipping")
@@ -89,28 +94,32 @@ def _ingest_cad_fi_hist(db: DuckDBWarehouse, reference_date: date, force: bool) 
     logger.info("ingest cad_fi_hist: done")
 
 
-def _ingest_extrato(db: DuckDBWarehouse, reference_date: date, force: bool) -> None:
+def ingest_extrato(
+    db: DuckDBWarehouse, reference_date: date, force: bool = False
+) -> None:
+    """Fetch CVM extrato_fi for reference_date's year and append today's snapshot."""
     today = date.today()
     if not force and _snapshot_loaded_today(db, "raw", "extrato_fi"):
         logger.info("ingest extrato: today's snapshot already loaded, skipping")
         return
     df = fetch_extrato(reference_date.year, force=force)
-    # extrato_fi has 100+ columns; keep only the 4 used by staging.fees
     df = df[["CNPJ_FUNDO_CLASSE", "DT_COMPTC", "TAXA_ADM", "EXISTE_TAXA_PERFM"]]
     db.append_snapshot("raw", "extrato_fi", df, downloaded_at=today)
     logger.info("ingest extrato: done")
 
 
-def _ingest_cdi(db: DuckDBWarehouse, reference_date: date, force: bool) -> None:
+def ingest_cdi(db: DuckDBWarehouse, reference_date: date, force: bool = False) -> None:
+    """Incrementally upsert BCB daily CDI rates into raw.cdi_daily."""
     max_dt = db.get_max_date("raw", "cdi_daily", "date")
-    start = max_dt if max_dt else _HISTORY_START
+    start = _HISTORY_START if force else (max_dt if max_dt else _HISTORY_START)
     df = fetch_cdi_daily(start=start, end=reference_date)
     if not df.empty:
         db.upsert_timeseries("raw", "cdi_daily", df, natural_key=["date"])
     logger.info("ingest cdi_daily: %d rows", len(df))
 
 
-def _ingest_anbima(db: DuckDBWarehouse, reference_date: date, force: bool) -> None:
+def ingest_anbima(db: DuckDBWarehouse, force: bool = False) -> None:
+    """Fetch ANBIMA characteristics Excel and append today's snapshot to raw.anbima_caracteristicas."""
     today = date.today()
     if not force and _snapshot_loaded_today(db, "raw", "anbima_caracteristicas"):
         logger.info("ingest anbima: today's snapshot already loaded, skipping")
