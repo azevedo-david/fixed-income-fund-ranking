@@ -13,11 +13,11 @@ from ..storage import DuckDBWarehouse
 logger = logging.getLogger(__name__)
 
 _DATASET = "staging.registry"
-_TASK = "stage_registro"
-_TASK_VALIDATE = "validate_registro"
+_TASK = "stage_registry"
+_TASK_VALIDATE = "validate_registry"
 
 
-def stage_registro(db: DuckDBWarehouse, reference_date: date) -> int:
+def stage_registry(db: DuckDBWarehouse, reference_date: date) -> int:
     """Read the latest raw registry snapshot, clean, and write to staging.registry."""
     downloaded_at = db.execute(
         "SELECT MAX(downloaded_at) FROM raw.registro_classe WHERE downloaded_at <= ?",
@@ -44,7 +44,7 @@ def stage_registro(db: DuckDBWarehouse, reference_date: date) -> int:
     return rows
 
 
-def validate_registro(db: DuckDBWarehouse, reference_date: date) -> list[Check]:
+def validate_registry(db: DuckDBWarehouse, reference_date: date) -> list[Check]:
     """Run data quality checks on staging.registry and write results to logs.validation_log."""
     df = db.execute(
         "SELECT * FROM staging.registry WHERE reference_date = ?", [reference_date]
