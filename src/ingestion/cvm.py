@@ -83,6 +83,8 @@ def fetch_inf_diario_month(ym: str, force: bool = False) -> pd.DataFrame:
     cnpj_col = next((c for c in df.columns if "CNPJ_FUNDO" in c), None)
     if cnpj_col and cnpj_col != "CNPJ_FUNDO_CLASSE":
         df = df.rename(columns={cnpj_col: "CNPJ_FUNDO_CLASSE"})
+    if "TP_FUNDO" in df.columns and "TP_FUNDO_CLASSE" not in df.columns:
+        df = df.rename(columns={"TP_FUNDO": "TP_FUNDO_CLASSE"})
     if "ID_SUBCLASSE" not in df.columns:
         df["ID_SUBCLASSE"] = None
 
