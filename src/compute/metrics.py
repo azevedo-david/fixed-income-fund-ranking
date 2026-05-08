@@ -1,23 +1,5 @@
-"""Build the full metrics DataFrame ready for ranking (``metrics_df``).
+"""Compute the full metrics DataFrame (returns, risk, IR tax layer) ready for ranking."""
 
-Pipeline:
-    1. Fetch cleaned daily returns (CVM) and CDI daily series (BCB).
-    2. Index returns on (CNPJ, ID_SUBCLASSE, date), join CDI, compute
-       ``excess_daily``.
-    3. Span filter: drop funds with less than ``settings.universe.min_span_days``
-       between their first and last quote.
-    4. Compute every metric:
-         - Trailing returns and alphas (1m..24m)
-         - %-of-months above CDI
-         - Volatility, Sharpe (raw + excess), max drawdown
-         - Annualised return (CAGR)
-         - Span (days)
-    5. Apply IR per fund (target taxation + isento keyword override) to all
-       accumulated returns and to CDI, producing net returns/alphas.
-    6. Map ``Publico_Alvo`` → ``investor_level`` (0/1/2).
-
-The output is keyed by (CNPJ_FUNDO_CLASSE, ID_SUBCLASSE), one row per fund.
-"""
 from __future__ import annotations
 
 import logging
@@ -48,16 +30,10 @@ GROUP_KEY = ["cnpj", "subclass_id"]
 _SUB_SENTINEL = "__NS__"
 
 
-# ---------------------------------------------------------------------------
-# Span (days between first and last observation)
-# ---------------------------------------------------------------------------
-
 def span_days(ri: pd.DataFrame) -> pd.Series:
     """Calendar days between the first and last observed quote per fund."""
     dates = (
-        ri.reset_index()
-          .groupby(GROUP_KEY, dropna=False)["date"]
-          .agg(["min", "max"])
+        ri.reset_index().groupby(GROUP_KEY, dropna=False)["date"].agg(["min", "max"])
     )
     return (dates["max"] - dates["min"]).dt.days.rename("span_days")
 
@@ -70,10 +46,6 @@ def filter_min_span(ri: pd.DataFrame, min_span_days: int) -> pd.DataFrame:
     return ri[mask]
 
 
-# ---------------------------------------------------------------------------
-# IR + investor level helpers
-# ---------------------------------------------------------------------------
-
 def resolve_ir_rate(
     tributacao: str | None,
     nome: str | None,
@@ -81,13 +53,7 @@ def resolve_ir_rate(
     isento_keywords: list[str],
     default_rate: float,
 ) -> float:
-    """Map a fund's target taxation + name to its accumulated-return IR rate.
-
-    Order of precedence:
-      1. Direct lookup in ``rates_by_tributacao``.
-      2. Name match against any keyword in ``isento_keywords`` → 0.0.
-      3. ``default_rate``.
-    """
+    """Map target taxation + name to IR rate; direct lookup → exempt keyword → default."""
     if tributacao in rates_by_tributacao:
         return rates_by_tributacao[tributacao]
     nome_up = str(nome or "").upper()
@@ -115,25 +81,27 @@ def map_investor_level(publico_alvo: pd.Series) -> pd.Series:
     """0 = geral (default), 1 = qualificado, 2 = profissional."""
     s = publico_alvo.fillna("").str.lower()
     return pd.Series(
-        np.where(s.str.contains("profissional"), 2,
-        np.where(s.str.contains("qualificado"), 1, 0)),
+        np.where(
+            s.str.contains("profissional"),
+            2,
+            np.where(s.str.contains("qualificado"), 1, 0),
+        ),
         index=publico_alvo.index,
         name="investor_level",
     )
 
 
-# ---------------------------------------------------------------------------
-# Sub-sentinel ↔ NaN index plumbing
-# ---------------------------------------------------------------------------
-
 def _index_with_sentinel(df: pd.DataFrame) -> pd.DataFrame:
     """Replace NaN ``subclass_id`` in the row index with ``_SUB_SENTINEL``."""
     idx = df.index
-    new_idx = pd.MultiIndex.from_arrays([
-        idx.get_level_values("cnpj"),
-        idx.get_level_values("subclass_id").fillna(_SUB_SENTINEL),
-        idx.get_level_values("date"),
-    ], names=["cnpj", "subclass_id", "date"])
+    new_idx = pd.MultiIndex.from_arrays(
+        [
+            idx.get_level_values("cnpj"),
+            idx.get_level_values("subclass_id").fillna(_SUB_SENTINEL),
+            idx.get_level_values("date"),
+        ],
+        names=["cnpj", "subclass_id", "date"],
+    )
     out = df.copy()
     out.index = new_idx
     return out
@@ -144,20 +112,20 @@ def _restore_subclasse_nan(df: pd.DataFrame) -> pd.DataFrame:
     idx = df.index
     sub = (
         idx.get_level_values("subclass_id")
-           .to_series()
-           .replace({_SUB_SENTINEL: np.nan})
-           .values
+        .to_series()
+        .replace({_SUB_SENTINEL: np.nan})
+        .values
     )
     out = df.copy()
-    out.index = pd.MultiIndex.from_arrays([
-        idx.get_level_values("cnpj"), sub,
-    ], names=GROUP_KEY)
+    out.index = pd.MultiIndex.from_arrays(
+        [
+            idx.get_level_values("cnpj"),
+            sub,
+        ],
+        names=GROUP_KEY,
+    )
     return out
 
-
-# ---------------------------------------------------------------------------
-# Pipeline steps
-# ---------------------------------------------------------------------------
 
 def _build_indexed_returns(
     daily: pd.DataFrame,
@@ -168,7 +136,8 @@ def _build_indexed_returns(
     ri = _index_with_sentinel(ri)
 
     fund_dates = pd.Index(
-        sorted(ri.index.get_level_values("date").unique()), name="date",
+        sorted(ri.index.get_level_values("date").unique()),
+        name="date",
     )
     cdi_aligned = cdi_daily.reindex(fund_dates).ffill()
     n_missing = int(cdi_aligned.isna().sum())
@@ -218,11 +187,7 @@ def _apply_tax_layer(
     cdi_annual: float,
     settings: Settings,
 ) -> pd.DataFrame:
-    """Per-fund net returns and net alphas for every window + the annualised one.
-
-    CDI uses a fixed long-term IR rate (``settings.tax.cdi_ir_rate``); funds use
-    the rate resolved from their target taxation / name.
-    """
+    """Compute net returns and net alphas for every window and the annualised return."""
     df = df.copy()
     df["ir_rate"] = df.apply(
         lambda r: resolve_ir_rate(
@@ -256,34 +221,25 @@ def _cdi_annualised(cdi_daily: pd.Series, reference_date: pd.Timestamp) -> float
     return float((1.0 + s).prod() ** (252.0 / span) - 1.0)
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
 def build_metrics(
     universe: pd.DataFrame,
     settings: Settings,
     force: bool = False,
 ) -> pd.DataFrame:
-    """End-to-end metrics build from the universe to ``metrics_df``.
-
-    Args:
-        universe: Output of ``compute.universe.build_universe`` — one row per
-            (CNPJ_FUNDO_CLASSE, ID_SUBCLASSE) with metadata, fees, AuM, ANBIMA.
-        settings: Project settings.
-        force: Re-fetch all upstream data (inf_diario + CDI) bypassing caches.
-
-    Output columns: trailing returns/alphas (gross + net) for every window,
-    annualised return/alpha, pct_months_above_cdi, volatility, sharpe_*,
-    max_drawdown, span_days, ir_rate, investor_level, plus universe metadata.
-    """
-    universe_keys = set(zip(
-        universe["cnpj"],
-        universe["subclass_id"].where(universe["subclass_id"].notna(), None),
-    ))
+    """Build the metrics DataFrame from universe → daily quotes → CDI → scoring inputs."""
+    universe_keys = set(
+        zip(
+            universe["cnpj"],
+            universe["subclass_id"].where(universe["subclass_id"].notna(), None),
+        )
+    )
     # 1. Daily quotes for the full window
-    logger.info("metrics: loading daily quotes for %d funds (%s → %s)",
-                len(universe_keys), settings.quotes_start, settings.quotes_end)
+    logger.info(
+        "metrics: loading daily quotes for %d funds (%s → %s)",
+        len(universe_keys),
+        settings.quotes_start,
+        settings.quotes_end,
+    )
     inf = load_inf_diario(
         start=settings.quotes_start,
         end=settings.quotes_end,
@@ -291,12 +247,14 @@ def build_metrics(
         force=force,
     )
     logger.info("metrics: %d rows loaded", len(inf))
-    inf = inf.rename(columns={
-        "CNPJ_FUNDO_CLASSE": "cnpj",
-        "ID_SUBCLASSE":      "subclass_id",
-        "DT_COMPTC":         "date",
-        "VL_QUOTA":          "nav",
-    })
+    inf = inf.rename(
+        columns={
+            "CNPJ_FUNDO_CLASSE": "cnpj",
+            "ID_SUBCLASSE": "subclass_id",
+            "DT_COMPTC": "date",
+            "VL_QUOTA": "nav",
+        }
+    )
     daily = daily_returns(inf)
 
     # 2. CDI: cover a couple of months of buffer for trailing-window margins
@@ -312,8 +270,12 @@ def build_metrics(
     ri = filter_min_span(ri, settings.universe.min_span_days)
     n_kept = ri.index.droplevel("date").unique().shape[0]
     n_dropped = len(universe_keys) - n_kept
-    logger.info("metrics: %d funds ready (dropped %d with < %d days of history)",
-                n_kept, n_dropped, settings.universe.min_span_days)
+    logger.info(
+        "metrics: %d funds ready (dropped %d with < %d days of history)",
+        n_kept,
+        n_dropped,
+        settings.universe.min_span_days,
+    )
 
     # 4. Per-fund metrics
     metrics = _compute_per_fund_metrics(ri, cdi, settings)
@@ -326,9 +288,13 @@ def build_metrics(
     # 6. Merge universe metadata (one row per fund, sentinel-based join)
     df = metrics.reset_index()
     meta_cols = [
-        "cnpj", "subclass_id",
-        "fund_name", "target_investor",
-        "target_taxation", "redemption_days", "min_investment",
+        "cnpj",
+        "subclass_id",
+        "fund_name",
+        "target_investor",
+        "target_taxation",
+        "redemption_days",
+        "min_investment",
     ]
     meta = (
         universe[meta_cols]

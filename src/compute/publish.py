@@ -1,17 +1,5 @@
-"""Structured ranking output — data contract and sink abstraction.
+"""Structured ranking output: typed data contract, payload builder, and sink abstraction."""
 
-``RankingPayload`` is the canonical output of the pipeline.
-Any callable that accepts it is a valid sink and can write it to a local
-file, upload it to S3, insert it into a database, or serve it as an API
-response — without changing any pipeline code.
-
-Adding a new delivery target:
-
-    def my_sink(payload: RankingPayload) -> None:
-        ...  # upload to S3, POST to API, INSERT into DB, etc.
-
-    publish(payload, sinks=[local_json_sink(path), my_sink])
-"""
 from __future__ import annotations
 
 import json
@@ -28,58 +16,42 @@ import pandas as pd
 from ..config import Settings
 from .ranking import rank_funds
 
-# ---------------------------------------------------------------------------
-# Schema version — bump when the contract shape changes
-# ---------------------------------------------------------------------------
-
 SCHEMA_VERSION = "1.1"
 
 
-# ---------------------------------------------------------------------------
-# Data contract (TypedDicts as the published schema)
-# ---------------------------------------------------------------------------
-
 class FundEntry(TypedDict):
-    rank:                  int
-    cnpj:                  str
-    subclass_id:           str | None
-    fund_name:             str
+    rank: int
+    cnpj: str
+    subclass_id: str | None
+    fund_name: str
     return_annualized_net: float | None
-    alpha_12m_net:         float | None
-    return_12m_net:        float | None
-    sharpe_excess:         float | None
-    pct_months_above_cdi:  float | None
-    max_drawdown:          float | None
-    redemption_days:       int | None
-    volatility:            float | None
+    alpha_12m_net: float | None
+    return_12m_net: float | None
+    sharpe_excess: float | None
+    pct_months_above_cdi: float | None
+    max_drawdown: float | None
+    redemption_days: int | None
+    volatility: float | None
 
 
 class SegmentResult(TypedDict):
-    purpose:        str
-    profile:        str
-    investor_type:  str
+    purpose: str
+    profile: str
+    investor_type: str
     eligible_funds: int
-    funds:          list[FundEntry]
+    funds: list[FundEntry]
 
 
 class RankingPayload(TypedDict):
-    schema_version:  str
-    generated_at:    str   # ISO-8601
-    reference_date:  str   # YYYY-MM-DD
-    universe_size:   int
-    segments:        list[SegmentResult]
+    schema_version: str
+    generated_at: str  # ISO-8601
+    reference_date: str  # YYYY-MM-DD
+    universe_size: int
+    segments: list[SegmentResult]
 
-
-# ---------------------------------------------------------------------------
-# Sink type — the extension point
-# ---------------------------------------------------------------------------
 
 Sink = Callable[[RankingPayload], None]
 
-
-# ---------------------------------------------------------------------------
-# Payload construction
-# ---------------------------------------------------------------------------
 
 def _coerce(v: Any) -> Any:
     """NaN → None; keep everything else as-is."""
@@ -126,13 +98,15 @@ def build_payload(metrics_df: pd.DataFrame, settings: Settings) -> RankingPayloa
             cnpj, subclass_id = idx
             funds.append(_fund_entry(rank_i, cnpj, subclass_id, row))
 
-        segments.append(SegmentResult(
-            purpose=combo.purpose,
-            profile=combo.profile,
-            investor_type=combo.investor_type,
-            eligible_funds=len(ranked),
-            funds=funds,
-        ))
+        segments.append(
+            SegmentResult(
+                purpose=combo.purpose,
+                profile=combo.profile,
+                investor_type=combo.investor_type,
+                eligible_funds=len(ranked),
+                funds=funds,
+            )
+        )
 
     return RankingPayload(
         schema_version=SCHEMA_VERSION,
@@ -143,23 +117,17 @@ def build_payload(metrics_df: pd.DataFrame, settings: Settings) -> RankingPayloa
     )
 
 
-# ---------------------------------------------------------------------------
-# Built-in sinks
-# ---------------------------------------------------------------------------
-
 def local_json_sink(path: Path) -> Sink:
     """Sink that writes the payload as indented UTF-8 JSON to ``path``."""
+
     def _sink(payload: RankingPayload) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(payload, fh, indent=2, ensure_ascii=False)
         logger.info("ranking.json written (%d segments)", len(payload["segments"]))
+
     return _sink
 
-
-# ---------------------------------------------------------------------------
-# Fan-out
-# ---------------------------------------------------------------------------
 
 def publish(payload: RankingPayload, sinks: list[Sink]) -> None:
     """Deliver ``payload`` to every registered sink in order."""

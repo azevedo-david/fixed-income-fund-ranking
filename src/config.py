@@ -1,9 +1,5 @@
-"""Project configuration loaded from config.yaml.
+"""Typed project settings loaded from config.yaml; all paths and URLs live here."""
 
-Single source of truth for all tunable parameters. run.py and modules import
-the typed Settings instance from here. Paths and external URLs are defined
-as module constants (immutable, no need to expose via YAML).
-"""
 from __future__ import annotations
 
 import os
@@ -18,99 +14,90 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# ---------------------------------------------------------------------------
-# Paths and URLs (not user-tunable — defined here)
-# ---------------------------------------------------------------------------
-PROJECT_ROOT  = Path(__file__).resolve().parent.parent
-DATA_DIR      = PROJECT_ROOT / "data"
-RAW_DIR       = DATA_DIR / "raw"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DATA_DIR = PROJECT_ROOT / "data"
+RAW_DIR = DATA_DIR / "raw"
 PROCESSED_DIR = DATA_DIR / "processed"
-OUTPUT_DIR    = PROJECT_ROOT / "output"
-LOGS_DIR      = PROJECT_ROOT / "logs"
+OUTPUT_DIR = PROJECT_ROOT / "output"
+LOGS_DIR = PROJECT_ROOT / "logs"
 
-CVM_BASE_URL    = "https://dados.cvm.gov.br/dados/FI"
+CVM_BASE_URL = "https://dados.cvm.gov.br/dados/FI"
 ANBIMA_BASE_URL = "https://api.anbima.com.br/feed/fundos/v2"
 ANBIMA_TOKEN_URL = "https://api.anbima.com.br/oauth/access-token"
-BCB_SGS_URL     = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.12/dados"
+BCB_SGS_URL = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.12/dados"
 
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config.yaml"
 
 
-# ---------------------------------------------------------------------------
-# Typed config sections
-# ---------------------------------------------------------------------------
-
 @dataclass(frozen=True)
 class UniverseConfig:
-    min_span_days:      int
-    aum_lookback_days:  int
-    min_aum:            float
-    min_cotistas:       int
+    min_span_days: int
+    aum_lookback_days: int
+    min_aum: float
+    min_cotistas: int
 
 
 @dataclass(frozen=True)
 class TaxConfig:
-    cdi_ir_rate:       float
+    cdi_ir_rate: float
     rates_by_taxation: dict[str, float]
-    default_rate:      float
-    exempt_keywords:   list[str]
+    default_rate: float
+    exempt_keywords: list[str]
 
 
 @dataclass(frozen=True)
 class BcbConfig:
-    serie_cdi:        int
-    url:              str
-    timeout_seconds:  int
+    serie_cdi: int
+    url: str
+    timeout_seconds: int
 
 
 @dataclass(frozen=True)
 class FeatureSpec:
-    col:        str
-    ascending:  bool
+    col: str
+    ascending: bool
 
 
 @dataclass(frozen=True)
 class ScoringConfig:
-    cont_features:       list[FeatureSpec]
-    span_lambda:         float
-    liquidity_lambda:    dict[str, float]
+    cont_features: list[FeatureSpec]
+    span_lambda: float
+    liquidity_lambda: dict[str, float]
     accessibility_scale: float
     accessibility_weight: float
-    weights:             dict[str, dict[str, list[float]]]
+    weights: dict[str, dict[str, list[float]]]
 
 
 @dataclass(frozen=True)
 class RankingCombo:
-    purpose:        str
-    profile:        str
-    investor_type:  str
+    purpose: str
+    profile: str
+    investor_type: str
 
 
 @dataclass(frozen=True)
 class OutputConfig:
-    ranking_md:       Path
-    ranking_json:     Path
-    metrics_parquet:  Path
+    ranking_md: Path
+    ranking_json: Path
+    metrics_parquet: Path
 
 
 @dataclass(frozen=True)
 class Settings:
-    reference_date:  date
-    force_download:  bool
-    universe:        UniverseConfig
-    windows:         dict[str, int]
-    tax:             TaxConfig
-    bcb:             BcbConfig
-    scoring:         ScoringConfig
-    rankings:        list[RankingCombo]
-    top_n:           int
-    output:          OutputConfig
+    reference_date: date
+    force_download: bool
+    universe: UniverseConfig
+    windows: dict[str, int]
+    tax: TaxConfig
+    bcb: BcbConfig
+    scoring: ScoringConfig
+    rankings: list[RankingCombo]
+    top_n: int
+    output: OutputConfig
 
-    # Optional secrets (env-only, not in YAML)
-    anbima_client_id:      str | None = None
-    anbima_client_secret:  str | None = None
+    anbima_client_id: str | None = None
+    anbima_client_secret: str | None = None
 
-    # ----- derived properties -----
     @property
     def max_window_months(self) -> int:
         """Largest trailing window — defines how much quote history to download."""
@@ -127,13 +114,10 @@ class Settings:
 
     @property
     def aum_lookback_months(self) -> list[str]:
-        """YYYYMM strings covering the AuM/cotistas lookback window.
-
-        Enumerates every month between (reference_date - aum_lookback_days)
-        and reference_date, inclusive. Typically returns [current_month] or
-        [previous_month, current_month] when the window crosses a month boundary.
-        """
-        start = self.reference_date - relativedelta(days=self.universe.aum_lookback_days)
+        """YYYYMM strings for every month in the AuM lookback window, inclusive."""
+        start = self.reference_date - relativedelta(
+            days=self.universe.aum_lookback_days
+        )
         months: list[str] = []
         cursor = date(start.year, start.month, 1)
         last = date(self.reference_date.year, self.reference_date.month, 1)
@@ -157,7 +141,6 @@ class Settings:
             weights=scoring_raw["weights"],
         )
 
-        # Validate that all weight vectors sum to 1.0 (within numeric tolerance)
         for purpose, profiles in scoring.weights.items():
             for profile, vec in profiles.items():
                 total = sum(vec)
@@ -174,7 +157,9 @@ class Settings:
         )
 
         raw_ref = cfg.get("reference_date")
-        reference_date = _parse_date(raw_ref) if raw_ref else date.today() - timedelta(days=1)
+        reference_date = (
+            _parse_date(raw_ref) if raw_ref else date.today() - timedelta(days=1)
+        )
 
         return cls(
             reference_date=reference_date,

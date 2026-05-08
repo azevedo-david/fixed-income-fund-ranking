@@ -1,13 +1,5 @@
-"""BCB SGS ingestion (CDI).
+"""BCB SGS ingestion for the CDI daily rate series (SGS code 12)."""
 
-Fetches the CDI daily series (SGS code 12) from the Brazilian Central Bank
-public API. Values are returned as decimal daily rates already compounded on
-business days.
-
-Cached as a parquet snapshot under ``data/processed/bcb/`` so subsequent runs
-on the same day skip the network call. The cache key is (start, end), so a
-different request range triggers a refresh.
-"""
 from __future__ import annotations
 
 import logging
@@ -25,8 +17,7 @@ BCB_PROCESSED = PROCESSED_DIR / "bcb"
 
 
 def _stem(start: pd.Timestamp, end: pd.Timestamp) -> str:
-    """Filename stem encoding the requested date range — different ranges
-    produce different cache files."""
+    """Filename stem encoding the requested date range."""
     return f"cdi_daily_{start:%Y%m%d}_{end:%Y%m%d}"
 
 
@@ -36,14 +27,7 @@ def fetch_cdi_daily(
     timeout: int = 30,
     force: bool = False,
 ) -> pd.Series:
-    """Fetch CDI daily rates between ``start`` and ``end`` (inclusive).
-
-    Returns a Series indexed by date, named ``cdi_daily``, with values in
-    decimal form (e.g. ``0.000528`` for ~13.25% a.a.).
-
-    Snapshot-cached as parquet keyed by today's date; old snapshots for the
-    same range are purged on save.
-    """
+    """Fetch CDI daily rates between ``start`` and ``end``, as a date-indexed Series of decimal values."""
     ensure_dirs()
     BCB_PROCESSED.mkdir(parents=True, exist_ok=True)
     stem = _stem(pd.Timestamp(start), pd.Timestamp(end))
@@ -52,8 +36,12 @@ def fetch_cdi_daily(
     if not force and cache.exists():
         s = pd.read_parquet(cache)["cdi_daily"]
         s.index.name = "data"
-        logger.info("CDI: %d trading days loaded from cache (%s → %s)",
-                    len(s), s.index.min().date(), s.index.max().date())
+        logger.info(
+            "CDI: %d trading days loaded from cache (%s → %s)",
+            len(s),
+            s.index.min().date(),
+            s.index.max().date(),
+        )
         return s
 
     url = (
@@ -71,6 +59,10 @@ def fetch_cdi_daily(
     out.to_frame().to_parquet(cache)
     purge_old_snapshots(BCB_PROCESSED, stem, ".parquet", keep=cache)
 
-    logger.info("CDI: %d trading days fetched (%s → %s)",
-                len(out), out.index.min().date(), out.index.max().date())
+    logger.info(
+        "CDI: %d trading days fetched (%s → %s)",
+        len(out),
+        out.index.min().date(),
+        out.index.max().date(),
+    )
     return out

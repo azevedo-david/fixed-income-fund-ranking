@@ -5,6 +5,7 @@ All functions take a DataFrame ``ri`` indexed on
 ``excess_daily`` and ``VL_QUOTA`` columns, and return a Series/DataFrame
 indexed on (CNPJ_FUNDO_CLASSE, ID_SUBCLASSE).
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -25,15 +26,18 @@ def volatility_and_sharpe(ri: pd.DataFrame) -> pd.DataFrame:
     std_r = g["return_daily"].std()
 
     sqrtN = np.sqrt(PERIODS_PER_YEAR)
-    return pd.DataFrame({
-        "volatility":    std_r * sqrtN,
-        "sharpe_excess": (mean_excess / std_r) * sqrtN,
-        "sharpe_raw":    (mean_r / std_r) * sqrtN,
-    })
+    return pd.DataFrame(
+        {
+            "volatility": std_r * sqrtN,
+            "sharpe_excess": (mean_excess / std_r) * sqrtN,
+            "sharpe_raw": (mean_r / std_r) * sqrtN,
+        }
+    )
 
 
 def max_drawdown(ri: pd.DataFrame) -> pd.Series:
     """Worst peak-to-trough drawdown of the cumulative-return curve per fund."""
+
     def _mdd(sub: pd.DataFrame) -> float:
         s = sub["return_daily"].dropna()
         if len(s) < 2:
@@ -43,6 +47,6 @@ def max_drawdown(ri: pd.DataFrame) -> pd.Series:
 
     return (
         ri.groupby(level=GROUP_KEY, dropna=False, group_keys=False)
-          .apply(_mdd)
-          .rename("max_drawdown")
+        .apply(_mdd)
+        .rename("max_drawdown")
     )

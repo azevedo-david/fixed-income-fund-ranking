@@ -1,21 +1,5 @@
-"""Percentile-based scoring and ranking of fixed-income funds.
+"""Percentile-based scoring and ranking of fixed-income funds."""
 
-Pipeline:
-    1. Filter eligible funds by investor_level ≤ access threshold.
-    2. Drop funds with missing ``redemption_days``.
-    3. Score each continuous feature as a percentile rank (flipped for
-       descending features such as volatility).
-    4. Compute structural scores: ``s_span`` (longevity) and ``s_prazo``
-       (liquidity penalty, purpose-dependent).
-    5. For ``investor_type="retail"``, blend in ``s_accessibility``
-       (minimum-investment penalty) at a fixed weight, rescaling the
-       other weights proportionally.
-    6. Final score = weighted dot product; output sorted descending,
-       indexed on (cnpj, subclass_id).
-
-Weight vector order (must match ``settings.scoring.weights`` rows):
-    cont_features (8) + s_span + s_prazo → 10 elements, summing to 1.0.
-"""
 from __future__ import annotations
 
 import numpy as np
@@ -27,11 +11,23 @@ _INVESTOR_ACCESS = {"retail": 0, "qualified": 1, "professional": 2}
 
 
 _OUT_COLS = [
-    "fund_name", "investor_level",
-    "ir_rate", "alpha_12m_net", "alpha_3m_net", "alpha_6m_net",
-    "return_annualized_net", "sharpe_excess", "pct_months_above_cdi",
-    "max_drawdown", "volatility", "span_days", "redemption_days",
-    "min_investment", "return_12m_net", "score", "rank",
+    "fund_name",
+    "investor_level",
+    "ir_rate",
+    "alpha_12m_net",
+    "alpha_3m_net",
+    "alpha_6m_net",
+    "return_annualized_net",
+    "sharpe_excess",
+    "pct_months_above_cdi",
+    "max_drawdown",
+    "volatility",
+    "span_days",
+    "redemption_days",
+    "min_investment",
+    "return_12m_net",
+    "score",
+    "rank",
 ]
 
 
@@ -42,19 +38,7 @@ def rank_funds(
     profile: str = "balanced",
     investor_type: str = "qualified",
 ) -> pd.DataFrame:
-    """Score and rank funds for a given purpose × profile × investor type.
-
-    Args:
-        df_enriched: output of ``compute.metrics.build_metrics``.
-        purpose: ``"caixa"`` or ``"renda"``.
-        settings: project settings (weights, lambdas, feature specs).
-        profile: ``"conservative"``, ``"balanced"``, or ``"aggressive"``.
-        investor_type: ``"retail"``, ``"qualified"``, or ``"professional"``.
-
-    Returns:
-        DataFrame indexed on (cnpj, subclass_id), sorted by score descending,
-        with a ``rank`` column and per-feature score columns.
-    """
+    """Score and rank funds for a given purpose × profile × investor_type combination."""
     if purpose not in settings.scoring.weights:
         raise ValueError(f"unknown purpose {purpose!r}")
     if profile not in settings.scoring.weights[purpose]:
@@ -73,15 +57,12 @@ def rank_funds(
     if eligible.empty:
         return pd.DataFrame()
 
-    # ── Continuous percentile scores ─────────────────────────────────────────
-    # NaN → 0.5 (neutral rank): a fund with no data for a window is neither
-    # penalised nor rewarded. Longevity is already captured by s_span.
+    # NaN → 0.5 (neutral rank): missing window data is neither penalised nor rewarded.
     for feat_spec in sc.cont_features:
         col = feat_spec.col
         pct = eligible[col].rank(pct=True, na_option="keep").fillna(0.5)
         eligible[f"s_{col}"] = pct if feat_spec.ascending else (1.0 - pct)
 
-    # ── Structural scores ────────────────────────────────────────────────────
     eligible["s_span"] = 1.0 - np.exp(-sc.span_lambda * eligible["span_days"] / 365.0)
     lam_prazo = sc.liquidity_lambda[purpose]
     eligible["s_liquidity"] = np.exp(-lam_prazo * eligible["redemption_days"])
@@ -89,7 +70,6 @@ def rank_funds(
         -eligible["min_investment"].fillna(0) / sc.accessibility_scale
     )
 
-    # ── Weighted score ───────────────────────────────────────────────────────
     w = sc.weights[purpose][profile]
     score_cols = [f"s_{fs.col}" for fs in sc.cont_features] + ["s_span", "s_liquidity"]
 
@@ -100,13 +80,18 @@ def rank_funds(
             + sc.accessibility_weight * eligible["s_accessibility"]
         )
     else:
-        eligible["score"] = sum(wi * eligible[sc_col] for wi, sc_col in zip(w, score_cols))
+        eligible["score"] = sum(
+            wi * eligible[sc_col] for wi, sc_col in zip(w, score_cols)
+        )
 
     eligible = eligible.sort_values("score", ascending=False)
     eligible["rank"] = eligible["score"].rank(method="min", ascending=False).astype(int)
 
-    # ── Index and select columns ──────────────────────────────────────────────
-    extra_score_cols = [f"s_{fs.col}" for fs in sc.cont_features] + ["s_span", "s_liquidity", "s_accessibility"]
+    extra_score_cols = [f"s_{fs.col}" for fs in sc.cont_features] + [
+        "s_span",
+        "s_liquidity",
+        "s_accessibility",
+    ]
     eligible = eligible.set_index(["cnpj", "subclass_id"])
 
     out_cols = _OUT_COLS + extra_score_cols

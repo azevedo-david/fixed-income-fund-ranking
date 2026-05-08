@@ -3,6 +3,7 @@
 Produces one section per ranking combo defined in ``settings.rankings``,
 each showing the top-N funds as a markdown table with formatted metrics.
 """
+
 from __future__ import annotations
 
 import logging
@@ -16,53 +17,61 @@ from .ranking import rank_funds
 logger = logging.getLogger(__name__)
 
 _DISPLAY_COLS = [
-    ("fund_name",             "Fund",              lambda v: str(v)),
-    ("return_annualized_net", "Ret ann (net)",     lambda v: f"{v:+.2%}"),
-    ("alpha_12m_net",         "α 12m (net)",       lambda v: f"{v:+.2%}"),
-    ("return_12m_net",        "Ret 12m (net)",     lambda v: f"{v:+.2%}"),
-    ("sharpe_excess",         "Sharpe",            lambda v: f"{v:.2f}"),
-    ("pct_months_above_cdi",  "% months > CDI",    lambda v: f"{v:.0%}"),
-    ("max_drawdown",          "Max DD",            lambda v: f"{v:.2%}"),
-    ("redemption_days",       "Redemption",        lambda v: f"D+{v:.0f}"),
-    ("volatility",            "Vol (ann)",         lambda v: f"{v:.2%}"),
+    ("fund_name", "Fund", lambda v: str(v)),
+    ("return_annualized_net", "Ret ann (net)", lambda v: f"{v:+.2%}"),
+    ("alpha_12m_net", "α 12m (net)", lambda v: f"{v:+.2%}"),
+    ("return_12m_net", "Ret 12m (net)", lambda v: f"{v:+.2%}"),
+    ("sharpe_excess", "Sharpe", lambda v: f"{v:.2f}"),
+    ("pct_months_above_cdi", "% months > CDI", lambda v: f"{v:.0%}"),
+    ("max_drawdown", "Max DD", lambda v: f"{v:.2%}"),
+    ("redemption_days", "Redemption", lambda v: f"D+{v:.0f}"),
+    ("volatility", "Vol (ann)", lambda v: f"{v:.2%}"),
 ]
 
-_PURPOSE_LABEL  = {"cash": "Cash", "income": "Income"}
-_PROFILE_LABEL  = {"conservative": "Conservative", "balanced": "Balanced", "aggressive": "Aggressive"}
-_INVESTOR_LABEL = {"retail": "Retail", "qualified": "Qualified", "professional": "Professional"}
+_PURPOSE_LABEL = {"cash": "Cash", "income": "Income"}
+_PROFILE_LABEL = {
+    "conservative": "Conservative",
+    "balanced": "Balanced",
+    "aggressive": "Aggressive",
+}
+_INVESTOR_LABEL = {
+    "retail": "Retail",
+    "qualified": "Qualified",
+    "professional": "Professional",
+}
 
 _PURPOSE_DESC = {
-    "cash":   "short-duration parking — favours consistency, near-zero drawdown, and same-day or next-day liquidity.",
-    "income":  "yield optimisation — favours alpha over CDI, risk-adjusted return, and sustained outperformance.",
+    "cash": "short-duration parking — favours consistency, near-zero drawdown, and same-day or next-day liquidity.",
+    "income": "yield optimisation — favours alpha over CDI, risk-adjusted return, and sustained outperformance.",
 }
 _PROFILE_DESC = {
     "conservative": "Puts the heaviest weight on % months above CDI and max drawdown; alpha matters but never at the cost of stability.",
-    "balanced":     "Balanced weight across alpha, Sharpe, consistency, and drawdown.",
-    "aggressive":   "Tilts strongly toward 12-month alpha and annualised return; accepts higher drawdown and lower liquidity.",
+    "balanced": "Balanced weight across alpha, Sharpe, consistency, and drawdown.",
+    "aggressive": "Tilts strongly toward 12-month alpha and annualised return; accepts higher drawdown and lower liquidity.",
 }
 _INVESTOR_DESC = {
-    "retail":       "Accessible to any investor. Applies a minimum-investment penalty (5% of score) favouring funds with lower entry barriers.",
-    "qualified":    "Investors with ≥ R$1M in financial investments (CVM definition). No access penalty applied.",
+    "retail": "Accessible to any investor. Applies a minimum-investment penalty (5% of score) favouring funds with lower entry barriers.",
+    "qualified": "Investors with ≥ R$1M in financial investments (CVM definition). No access penalty applied.",
     "professional": "Investors with ≥ R$10M. Includes exclusive and restricted funds unavailable to retail/qualified.",
 }
 
 _FEATURE_DESC = {
-    "alpha_12m_net":         "12-month net alpha vs CDI",
-    "alpha_3m_net":          "3-month net alpha vs CDI",
-    "alpha_6m_net":          "6-month net alpha vs CDI",
-    "alpha_24m_net":         "24-month net alpha vs CDI",
-    "alpha_36m_net":         "36-month net alpha vs CDI",
+    "alpha_12m_net": "12-month net alpha vs CDI",
+    "alpha_3m_net": "3-month net alpha vs CDI",
+    "alpha_6m_net": "6-month net alpha vs CDI",
+    "alpha_24m_net": "24-month net alpha vs CDI",
+    "alpha_36m_net": "36-month net alpha vs CDI",
     "return_annualized_net": "Annualised net return (CAGR)",
-    "sharpe_excess":         "Excess Sharpe (excess return / volatility)",
-    "pct_months_above_cdi":  "% of calendar months the fund beat CDI",
-    "max_drawdown":          "Max peak-to-trough drawdown (higher = smaller loss)",
-    "volatility":            "Daily return volatility, annualised (lower is better)",
+    "sharpe_excess": "Excess Sharpe (excess return / volatility)",
+    "pct_months_above_cdi": "% of calendar months the fund beat CDI",
+    "max_drawdown": "Max peak-to-trough drawdown (higher = smaller loss)",
+    "volatility": "Daily return volatility, annualised (lower is better)",
 }
 
 
 def _methodology_section(settings: Settings) -> list[str]:
     sc = settings.scoring
-    u  = settings.universe
+    u = settings.universe
 
     lines: list[str] = [
         "## Methodology",
@@ -125,16 +134,27 @@ def _methodology_section(settings: Settings) -> list[str]:
         "### Weight vectors",
         "",
         "Each weight vector sums to 1.0. Columns: "
-        + ", ".join(f.col.replace("_net", "").replace("return_annualized", "cagr") for f in sc.cont_features)
+        + ", ".join(
+            f.col.replace("_net", "").replace("return_annualized", "cagr")
+            for f in sc.cont_features
+        )
         + ", span, liquidity.",
         "",
-        "| Purpose | Profile | " + " | ".join(
-            f.col.replace("alpha_", "α").replace("m_net", "m").replace("return_annualized_net", "cagr")
-            .replace("sharpe_excess", "sharpe").replace("pct_months_above_cdi", "%>cdi")
-            .replace("max_drawdown", "mdd").replace("volatility", "vol")
+        "| Purpose | Profile | "
+        + " | ".join(
+            f.col.replace("alpha_", "α")
+            .replace("m_net", "m")
+            .replace("return_annualized_net", "cagr")
+            .replace("sharpe_excess", "sharpe")
+            .replace("pct_months_above_cdi", "%>cdi")
+            .replace("max_drawdown", "mdd")
+            .replace("volatility", "vol")
             for f in sc.cont_features
-        ) + " | span | liq |",
-        "|---------|---------|" + "|".join("---" for _ in range(len(sc.cont_features) + 2)) + "|",
+        )
+        + " | span | liq |",
+        "|---------|---------|"
+        + "|".join("---" for _ in range(len(sc.cont_features) + 2))
+        + "|",
     ]
     for purpose, profiles in sc.weights.items():
         for profile, w in profiles.items():
@@ -149,8 +169,8 @@ def _methodology_section(settings: Settings) -> list[str]:
 def _md_table(ranked: pd.DataFrame, top_n: int) -> str:
     cols = [(col, hdr, fmt) for col, hdr, fmt in _DISPLAY_COLS if col in ranked.columns]
     header = "| # | CNPJ | " + " | ".join(hdr for _, hdr, _ in cols) + " |"
-    sep    = "|---|---|" + "|".join("---" for _ in cols) + "|"
-    rows   = [header, sep]
+    sep = "|---|---|" + "|".join("---" for _ in cols) + "|"
+    rows = [header, sep]
     for rank_i, (idx, row) in enumerate(ranked.head(top_n).iterrows(), 1):
         cnpj = idx[0] if isinstance(idx, tuple) else idx
         cells = " | ".join(fmt(row[col]) for col, _, fmt in cols)
@@ -174,10 +194,14 @@ def generate_report(metrics_df: pd.DataFrame, settings: Settings) -> str:
     lines += ["## Rankings", ""]
 
     for combo in settings.rankings:
-        ranked = rank_funds(metrics_df, combo.purpose, settings, combo.profile, combo.investor_type)
-        purpose_lbl  = _PURPOSE_LABEL.get(combo.purpose,       combo.purpose.title())
-        profile_lbl  = _PROFILE_LABEL.get(combo.profile,       combo.profile.title())
-        investor_lbl = _INVESTOR_LABEL.get(combo.investor_type, combo.investor_type.title())
+        ranked = rank_funds(
+            metrics_df, combo.purpose, settings, combo.profile, combo.investor_type
+        )
+        purpose_lbl = _PURPOSE_LABEL.get(combo.purpose, combo.purpose.title())
+        profile_lbl = _PROFILE_LABEL.get(combo.profile, combo.profile.title())
+        investor_lbl = _INVESTOR_LABEL.get(
+            combo.investor_type, combo.investor_type.title()
+        )
 
         lines += [
             f"## {purpose_lbl} · {profile_lbl} · {investor_lbl}",
