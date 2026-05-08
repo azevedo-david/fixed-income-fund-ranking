@@ -1,4 +1,4 @@
-"""Staging transform and validation for CVM fund registry → staging.registro."""
+"""Staging transform and validation for CVM fund registry → staging.registry."""
 
 from __future__ import annotations
 
@@ -12,13 +12,13 @@ from ..storage import DuckDBWarehouse
 
 logger = logging.getLogger(__name__)
 
-_DATASET = "staging.registro"
+_DATASET = "staging.registry"
 _TASK = "stage_registro"
 _TASK_VALIDATE = "validate_registro"
 
 
 def stage_registro(db: DuckDBWarehouse, reference_date: date) -> int:
-    """Read the latest raw registry snapshot, clean, and write to staging.registro."""
+    """Read the latest raw registry snapshot, clean, and write to staging.registry."""
     downloaded_at = db.execute(
         "SELECT MAX(downloaded_at) FROM raw.registro_classe WHERE downloaded_at <= ?",
         [reference_date],
@@ -45,9 +45,9 @@ def stage_registro(db: DuckDBWarehouse, reference_date: date) -> int:
 
 
 def validate_registro(db: DuckDBWarehouse, reference_date: date) -> list[Check]:
-    """Run data quality checks on staging.registro and write results to logs.validation_log."""
+    """Run data quality checks on staging.registry and write results to logs.validation_log."""
     df = db.execute(
-        "SELECT * FROM staging.registro WHERE reference_date = ?", [reference_date]
+        "SELECT * FROM staging.registry WHERE reference_date = ?", [reference_date]
     ).df()
 
     checks = [
@@ -163,7 +163,7 @@ def _check_row_count(df: pd.DataFrame) -> Check:
         severity="error",
         value=str(n),
         threshold="> 0",
-        message=None if passed else "staging.registro is empty",
+        message=None if passed else "staging.registry is empty",
     )
 
 

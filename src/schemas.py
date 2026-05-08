@@ -142,8 +142,8 @@ CREATE TABLE IF NOT EXISTS raw.pipeline_runs (
     PRIMARY KEY (reference_date, task)
 )"""
 
-STAGING_REGISTRO = """\
-CREATE TABLE IF NOT EXISTS staging.registro (
+STAGING_REGISTRY = """\
+CREATE TABLE IF NOT EXISTS staging.registry (
     fund_cnpj        VARCHAR NOT NULL,
     subclass_id      VARCHAR,
     fund_name        VARCHAR,
@@ -158,8 +158,8 @@ CREATE TABLE IF NOT EXISTS staging.registro (
     reference_date   DATE    NOT NULL
 )"""
 
-STAGING_INF_DIARIO = """\
-CREATE TABLE IF NOT EXISTS staging.inf_diario (
+STAGING_DAILY_QUOTES = """\
+CREATE TABLE IF NOT EXISTS staging.daily_quotes (
     fund_cnpj      VARCHAR NOT NULL,
     subclass_id    VARCHAR,
     date           DATE    NOT NULL,
@@ -183,8 +183,8 @@ CREATE TABLE IF NOT EXISTS staging.fees (
     reference_date DATE    NOT NULL
 )"""
 
-STAGING_CDI_DAILY = """\
-CREATE TABLE IF NOT EXISTS staging.cdi_daily (
+STAGING_CDI_RATES = """\
+CREATE TABLE IF NOT EXISTS staging.cdi_rates (
     date           DATE   NOT NULL,
     rate           DOUBLE NOT NULL,
     reference_date DATE   NOT NULL
@@ -280,10 +280,10 @@ ALL_DDLS: list[str] = [
     RAW_ANBIMA_CARACTERISTICAS,
     RAW_CDI_DAILY,
     RAW_PIPELINE_RUNS,
-    STAGING_REGISTRO,
-    STAGING_INF_DIARIO,
+    STAGING_REGISTRY,
+    STAGING_DAILY_QUOTES,
     STAGING_FEES,
-    STAGING_CDI_DAILY,
+    STAGING_CDI_RATES,
     STAGING_ANBIMA,
     MARTS_UNIVERSE,
     MARTS_METRICS,
