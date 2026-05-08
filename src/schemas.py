@@ -144,43 +144,43 @@ CREATE TABLE IF NOT EXISTS raw.pipeline_runs (
 
 STAGING_REGISTRO = """\
 CREATE TABLE IF NOT EXISTS staging.registro (
-    CNPJ_FUNDO_CLASSE    VARCHAR NOT NULL,
-    ID_SUBCLASSE         VARCHAR,
-    fund_name            VARCHAR,
-    dt_inicio            DATE,
-    situacao             VARCHAR,
-    classificacao_anbima VARCHAR,
-    target_investor      VARCHAR,
-    classe_cotas         VARCHAR,
-    forma_condominio     VARCHAR,
-    exclusivo            VARCHAR,
-    previdenciario       VARCHAR,
-    reference_date       DATE    NOT NULL
+    fund_cnpj        VARCHAR NOT NULL,
+    subclass_id      VARCHAR,
+    fund_name        VARCHAR,
+    inception_date   DATE,
+    status           VARCHAR,
+    anbima_category  VARCHAR,
+    target_investor  VARCHAR,
+    share_class      VARCHAR,
+    fund_structure   VARCHAR,
+    is_exclusive     VARCHAR,
+    is_pension       VARCHAR,
+    reference_date   DATE    NOT NULL
 )"""
 
 STAGING_INF_DIARIO = """\
 CREATE TABLE IF NOT EXISTS staging.inf_diario (
-    CNPJ_FUNDO_CLASSE VARCHAR NOT NULL,
-    ID_SUBCLASSE      VARCHAR,
-    DT_COMPTC         DATE    NOT NULL,
-    VL_QUOTA          DOUBLE,
-    VL_PATRIM_LIQ     DOUBLE,
-    CAPTC_DIA         DOUBLE,
-    RESG_DIA          DOUBLE,
-    NR_COTST          INTEGER,
-    reference_date    DATE    NOT NULL
+    fund_cnpj      VARCHAR NOT NULL,
+    subclass_id    VARCHAR,
+    date           DATE    NOT NULL,
+    nav            DOUBLE,
+    aum            DOUBLE,
+    inflows        DOUBLE,
+    outflows       DOUBLE,
+    shareholders   INTEGER,
+    reference_date DATE    NOT NULL
 )"""
 
 STAGING_FEES = """\
 CREATE TABLE IF NOT EXISTS staging.fees (
-    CNPJ_FUNDO_CLASSE VARCHAR NOT NULL,
-    adm_fee           DOUBLE,
-    adm_fee_dt        DATE,
-    perf_fee          DOUBLE,
-    perf_fee_desc     VARCHAR,
-    perf_fee_dt       DATE,
-    has_perf_fee      BOOLEAN,
-    reference_date    DATE    NOT NULL
+    fund_cnpj      VARCHAR NOT NULL,
+    adm_fee        DOUBLE,
+    adm_fee_date   DATE,
+    perf_fee       DOUBLE,
+    perf_fee_desc  VARCHAR,
+    perf_fee_date  DATE,
+    has_perf_fee   BOOLEAN,
+    reference_date DATE    NOT NULL
 )"""
 
 STAGING_CDI_DAILY = """\
@@ -192,29 +192,29 @@ CREATE TABLE IF NOT EXISTS staging.cdi_daily (
 
 STAGING_ANBIMA = """\
 CREATE TABLE IF NOT EXISTS staging.anbima (
-    CNPJ_FUNDO_CLASSE         VARCHAR NOT NULL,
-    ID_SUBCLASSE              VARCHAR,
-    anbima_code               VARCHAR,
-    estrutura                 VARCHAR,
-    nome_comercial            VARCHAR,
-    categoria_anbima          VARCHAR,
-    tipo_anbima               VARCHAR,
-    nivel_1                   VARCHAR,
-    nivel_2                   VARCHAR,
-    nivel_3                   VARCHAR,
-    foco_atuacao              VARCHAR,
-    composicao                VARCHAR,
-    aberto_estatutariamente   VARCHAR,
-    fundo_esg                 VARCHAR,
-    tributacao_alvo           VARCHAR,
-    administrador             VARCHAR,
-    gestor_principal          VARCHAR,
-    tipo_investidor           VARCHAR,
-    caracteristica_investidor VARCHAR,
-    aplicacao_inicial_minima  DOUBLE,
-    cota_abertura             VARCHAR,
-    prazo_pagamento_resgate   INTEGER,
-    reference_date            DATE    NOT NULL
+    fund_cnpj              VARCHAR NOT NULL,
+    subclass_id            VARCHAR,
+    anbima_code            VARCHAR,
+    structure              VARCHAR,
+    commercial_name        VARCHAR,
+    category               VARCHAR,
+    type                   VARCHAR,
+    level_1                VARCHAR,
+    level_2                VARCHAR,
+    level_3                VARCHAR,
+    focus                  VARCHAR,
+    composition            VARCHAR,
+    open_to_public         VARCHAR,
+    is_esg                 VARCHAR,
+    target_taxation        VARCHAR,
+    administrator          VARCHAR,
+    lead_manager           VARCHAR,
+    investor_type          VARCHAR,
+    investor_profile       VARCHAR,
+    min_initial_investment DOUBLE,
+    open_nav_quota         VARCHAR,
+    redemption_days        INTEGER,
+    reference_date         DATE    NOT NULL
 )"""
 
 MARTS_UNIVERSE = """\

@@ -1,4 +1,4 @@
-"""Staging transform for CVM fund registry → staging.registro."""
+"""Staging transform and validation for CVM fund registry → staging.registro."""
 
 from __future__ import annotations
 
@@ -7,32 +7,20 @@ from datetime import date
 
 import pandas as pd
 
-from ._utils import fmt_cnpj
+from ._utils import Check, fmt_cnpj, log_checks
 from ..storage import DuckDBWarehouse
 
 logger = logging.getLogger(__name__)
 
-
-def clean_registry(
-    classe: pd.DataFrame,
-    subclasse: pd.DataFrame,
-    reference_date: date,
-) -> pd.DataFrame:
-    """Filter and merge registro_classe + registro_subclasse into a normalised registry.
-
-    Applies status and temporal filters only; business-rule filters (Exclusivo,
-    Forma_Condominio, Previdenciario) are preserved as columns for universe.py.
-    """
-    cl = _clean_classe(classe, reference_date)
-    sub = _clean_subclasse(subclasse)
-    return _merge(cl, sub, reference_date)
+_DATASET = "staging.registro"
+_TASK = "stage_registro"
+_TASK_VALIDATE = "validate_registro"
 
 
 def stage_registro(db: DuckDBWarehouse, reference_date: date) -> int:
-    """Read raw registry snapshots, clean, and write to staging.registro."""
+    """Read the latest raw registry snapshot, clean, and write to staging.registro."""
     downloaded_at = db.execute(
-        "SELECT MAX(downloaded_at) FROM raw.registro_classe "
-        "WHERE downloaded_at <= ?",
+        "SELECT MAX(downloaded_at) FROM raw.registro_classe WHERE downloaded_at <= ?",
         [reference_date],
     ).fetchone()[0]
 
@@ -49,11 +37,44 @@ def stage_registro(db: DuckDBWarehouse, reference_date: date) -> int:
         [downloaded_at],
     ).df()
 
-    df = clean_registry(classe, subclasse, reference_date)
+    df = _clean(classe, subclasse, reference_date)
     df["reference_date"] = reference_date
     rows = db.upsert_derived("staging", "registro", df, reference_date=reference_date)
     logger.info("stage registro: %d rows written", rows)
     return rows
+
+
+def validate_registro(db: DuckDBWarehouse, reference_date: date) -> list[Check]:
+    """Run data quality checks on staging.registro and write results to logs.validation_log."""
+    df = db.execute(
+        "SELECT * FROM staging.registro WHERE reference_date = ?", [reference_date]
+    ).df()
+
+    checks = [
+        _check_row_count(df),
+        _check_no_null_cnpj(df),
+        _check_anbima_category(df),
+        _check_inception_date_coverage(df),
+    ]
+
+    log_checks(db, checks, _DATASET, _TASK_VALIDATE, reference_date)
+
+    failed_errors = [c for c in checks if not c.passed and c.severity == "error"]
+    if failed_errors:
+        names = ", ".join(c.name for c in failed_errors)
+        raise ValueError(f"validate registro: error-level checks failed: {names}")
+
+    return checks
+
+
+def _clean(
+    classe: pd.DataFrame,
+    subclasse: pd.DataFrame,
+    reference_date: date,
+) -> pd.DataFrame:
+    cl = _clean_classe(classe, reference_date)
+    sub = _clean_subclasse(subclasse)
+    return _merge(cl, sub)
 
 
 def _clean_classe(df: pd.DataFrame, reference_date: date) -> pd.DataFrame:
@@ -67,79 +88,121 @@ def _clean_classe(df: pd.DataFrame, reference_date: date) -> pd.DataFrame:
         & (out["Data_Inicio"] <= pd.Timestamp(reference_date))
     ]
 
-    out = (
+    return (
         out.sort_values("Data_Inicio")
         .drop_duplicates(subset="CNPJ_Classe", keep="last")
         .rename(
             columns={
-                "CNPJ_Classe": "CNPJ_FUNDO_CLASSE",
+                "CNPJ_Classe": "fund_cnpj",
                 "Denominacao_Social": "fund_name",
-                "Data_Inicio": "dt_inicio",
-                "Situacao": "situacao",
-                "Classificacao_Anbima": "classificacao_anbima",
+                "Data_Inicio": "inception_date",
+                "Situacao": "status",
+                "Classificacao_Anbima": "anbima_category",
                 "Publico_Alvo": "target_investor",
-                "Classe_Cotas": "classe_cotas",
-                "Forma_Condominio": "forma_condominio",
-                "Exclusivo": "exclusivo",
+                "Classe_Cotas": "share_class",
+                "Forma_Condominio": "fund_structure",
+                "Exclusivo": "is_exclusive",
             }
-        )
-    )
-
-    return out[
-        [
-            "CNPJ_FUNDO_CLASSE",
-            "ID_Registro_Classe",
-            "fund_name",
-            "dt_inicio",
-            "situacao",
-            "classificacao_anbima",
-            "target_investor",
-            "classe_cotas",
-            "forma_condominio",
-            "exclusivo",
+        )[
+            [
+                "fund_cnpj",
+                "ID_Registro_Classe",
+                "fund_name",
+                "inception_date",
+                "status",
+                "anbima_category",
+                "target_investor",
+                "share_class",
+                "fund_structure",
+                "is_exclusive",
+            ]
         ]
-    ]
+    )
 
 
 def _clean_subclasse(df: pd.DataFrame) -> pd.DataFrame:
     out = df[df["Situacao"] == "Em Funcionamento Normal"].copy()
-    out = out.rename(
+    return out.rename(
         columns={
-            "ID_Subclasse": "ID_SUBCLASSE",
+            "ID_Subclasse": "subclass_id",
             "Denominacao_Social": "fund_name_sub",
-            "Previdenciario": "previdenciario",
+            "Previdenciario": "is_pension",
         }
-    )
-    return out[
-        ["ID_Registro_Classe", "ID_SUBCLASSE", "fund_name_sub", "previdenciario"]
-    ]
+    )[["ID_Registro_Classe", "subclass_id", "fund_name_sub", "is_pension"]]
 
 
-def _merge(
-    classe: pd.DataFrame,
-    subclasse: pd.DataFrame,
-    reference_date: date,
-) -> pd.DataFrame:
+def _merge(classe: pd.DataFrame, subclasse: pd.DataFrame) -> pd.DataFrame:
     merged = classe.merge(subclasse, how="left", on="ID_Registro_Classe")
-
-    # For single-class funds (no subclasse row), carry classe fund_name and blank previdenciario
     merged["fund_name"] = merged["fund_name_sub"].where(
         merged["fund_name_sub"].notna(), merged["fund_name"]
     )
-    merged["previdenciario"] = merged["previdenciario"].fillna("N")
-
+    merged["is_pension"] = merged["is_pension"].fillna("N")
     return merged[
         [
-            "CNPJ_FUNDO_CLASSE",
-            "ID_SUBCLASSE",
+            "fund_cnpj",
+            "subclass_id",
             "fund_name",
-            "dt_inicio",
-            "situacao",
-            "classificacao_anbima",
+            "inception_date",
+            "status",
+            "anbima_category",
             "target_investor",
-            "classe_cotas",
-            "forma_condominio",
-            "exclusivo",
-            "previdenciario",
+            "share_class",
+            "fund_structure",
+            "is_exclusive",
+            "is_pension",
         ]
     ]
+
+
+def _check_row_count(df: pd.DataFrame) -> Check:
+    n = len(df)
+    passed = n > 0
+    return Check(
+        name="row_count_positive",
+        passed=passed,
+        severity="error",
+        value=str(n),
+        threshold="> 0",
+        message=None if passed else "staging.registro is empty",
+    )
+
+
+def _check_no_null_cnpj(df: pd.DataFrame) -> Check:
+    n_null = int(df["fund_cnpj"].isna().sum())
+    passed = n_null == 0
+    return Check(
+        name="no_null_fund_cnpj",
+        passed=passed,
+        severity="error",
+        value=str(n_null),
+        threshold="0",
+        message=None if passed else f"{n_null} rows have null fund_cnpj",
+    )
+
+
+def _check_anbima_category(df: pd.DataFrame) -> Check:
+    n_wrong = int((~df["anbima_category"].str.startswith("Renda Fixa", na=True)).sum())
+    passed = n_wrong == 0
+    return Check(
+        name="anbima_category_renda_fixa",
+        passed=passed,
+        severity="warning",
+        value=str(n_wrong),
+        threshold="0",
+        message=(
+            None if passed else f"{n_wrong} rows with non-Renda Fixa anbima_category"
+        ),
+    )
+
+
+def _check_inception_date_coverage(df: pd.DataFrame) -> Check:
+    pct_null = df["inception_date"].isna().mean() * 100
+    passed = pct_null < 5.0
+    return Check(
+        name="inception_date_coverage",
+        passed=passed,
+        severity="warning",
+        value=f"{pct_null:.1f}%",
+        threshold="< 5%",
+        message=None if passed else f"{pct_null:.1f}% of rows missing inception_date",
+    )
