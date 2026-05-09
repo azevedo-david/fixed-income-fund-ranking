@@ -26,44 +26,13 @@ from .compute.tax import apply_ir, net_series, resolve_ir_rate
 
 logger = logging.getLogger(__name__)
 
-_SUB_SENTINEL = "__NS__"
-
-
-def _index_with_sentinel(df: pd.DataFrame) -> pd.DataFrame:
-    idx = df.index
-    out = df.copy()
-    out.index = pd.MultiIndex.from_arrays(
-        [
-            idx.get_level_values("cnpj"),
-            idx.get_level_values("subclass_id").fillna(_SUB_SENTINEL),
-            idx.get_level_values("date"),
-        ],
-        names=["cnpj", "subclass_id", "date"],
-    )
-    return out
-
-
-def _restore_subclasse_nan(df: pd.DataFrame) -> pd.DataFrame:
-    idx = df.index
-    sub = (
-        idx.get_level_values("subclass_id")
-        .to_series()
-        .replace({_SUB_SENTINEL: np.nan})
-        .values
-    )
-    out = df.copy()
-    out.index = pd.MultiIndex.from_arrays(
-        [idx.get_level_values("cnpj"), sub], names=GROUP_KEY
-    )
-    return out
-
 
 def span_days(ri: pd.DataFrame) -> pd.Series:
     """Calendar days between first and last observed quote per fund."""
     dates = (
         ri.reset_index().groupby(GROUP_KEY, dropna=False)["date"].agg(["min", "max"])
     )
-    return (dates["max"] - dates["min"]).dt.days.rename("span_days")
+    return (dates["max"] - dates["min"]).dt.days.rename("span_days").astype("int64")
 
 
 def filter_min_span(ri: pd.DataFrame, min_span_days: int) -> pd.DataFrame:
@@ -88,15 +57,20 @@ def map_investor_level(publico_alvo: pd.Series) -> pd.Series:
 
 
 def _build_indexed_returns(daily: pd.DataFrame, cdi_daily: pd.Series) -> pd.DataFrame:
+    """Build returns DataFrame with CDI alignment: ffill within each fund's date range."""
     ri = daily.set_index(GROUP_KEY + ["date"])[["return_daily", "nav"]].sort_index()
-    ri = _index_with_sentinel(ri)
+
     fund_dates = pd.Index(
         sorted(ri.index.get_level_values("date").unique()), name="date"
     )
-    cdi_aligned = cdi_daily.reindex(fund_dates).ffill()
+    cdi_aligned = cdi_daily.reindex(fund_dates, fill_value=np.nan).ffill()
     n_missing = int(cdi_aligned.isna().sum())
     if n_missing:
-        logger.warning("CDI alignment: %d dates still NaN after ffill", n_missing)
+        logger.warning(
+            "CDI alignment: %d dates missing after ffill (before first CDI date or after last fund quote)",
+            n_missing,
+        )
+
     ri = ri.join(cdi_aligned, on="date")
     ri["excess_daily"] = ri["return_daily"] - ri["cdi_daily"]
     return ri
@@ -145,23 +119,36 @@ def _apply_tax_layer(
     cdi_annual: float,
     settings: Settings,
 ) -> pd.DataFrame:
+    """Apply IR tax rates and compute net returns/alphas.
+
+    Tax rate is resolved via:
+    1. Exact match on target_taxation in rates_by_taxation dict
+    2. If not found, check if fund_name contains exempt keywords → 0% tax
+    3. Otherwise use default_rate
+    """
     df = df.copy()
-    df["ir_rate"] = df.apply(
-        lambda r: resolve_ir_rate(
-            r.get("target_taxation"),
-            r.get("fund_name"),
-            settings.tax.rates_by_taxation,
-            settings.tax.exempt_keywords,
-            settings.tax.default_rate,
-        ),
-        axis=1,
-    )
+
+    rates_dict = settings.tax.rates_by_taxation
+    exempt_kws = settings.tax.exempt_keywords
+    default_rate = settings.tax.default_rate
+
+    def get_ir_rate(row: pd.Series) -> float:
+        return resolve_ir_rate(
+            row.get("target_taxation"),
+            row.get("fund_name"),
+            rates_dict,
+            exempt_kws,
+            default_rate,
+        )
+
+    df["ir_rate"] = df.apply(get_ir_rate, axis=1)
+
     cdi_ir = settings.tax.cdi_ir_rate
     labels = list(settings.windows.keys()) + ["annualized"]
     for label in labels:
         gross_col = f"return_{label}" if label != "annualized" else "annualized_return"
         df[f"return_{label}_net"] = net_series(df[gross_col], df["ir_rate"])
-        cdi_gross = cdi_window[label] if label in cdi_window else cdi_annual
+        cdi_gross = cdi_window.get(label, cdi_annual)
         df[f"alpha_{label}_net"] = df[f"return_{label}_net"] - apply_ir(
             cdi_gross, cdi_ir
         )
@@ -213,11 +200,24 @@ def build_metrics(
 
     daily = daily_returns(quotes_df)
     ri = _build_indexed_returns(daily, cdi)
+
+    funds_before_span = ri.index.droplevel("date").unique().shape[0]
     ri = filter_min_span(ri, settings.universe.min_span_days)
+    funds_after_span = ri.index.droplevel("date").unique().shape[0]
+
+    if ri.empty:
+        logger.warning(
+            "metrics: all funds filtered by min_span_days=%d for %s",
+            settings.universe.min_span_days,
+            reference_date,
+        )
+        return pd.DataFrame(columns=["fund_cnpj", "subclass_id", "reference_date"])
+
     logger.info(
-        "metrics: %d funds after span filter for %s",
-        ri.index.droplevel("date").unique().shape[0],
+        "metrics: %d funds after span filter for %s (removed %d)",
+        funds_after_span,
         reference_date,
+        funds_before_span - funds_after_span,
     )
 
     metrics = compute_fund_metrics(ri, cdi, settings.windows, reference_date)
@@ -227,7 +227,6 @@ def build_metrics(
     cdi_annual = _cdi_annualised(cdi, ref)
 
     df = metrics.reset_index()
-    df["subclass_id"] = df["subclass_id"].fillna(_SUB_SENTINEL)
 
     meta_cols = [
         "fund_cnpj",
@@ -238,17 +237,26 @@ def build_metrics(
         "redemption_days",
         "min_investment",
     ]
+    if not all(c in universe_df.columns for c in meta_cols):
+        missing = [c for c in meta_cols if c not in universe_df.columns]
+        raise KeyError(f"metrics: missing universe columns: {missing}")
+
     meta = (
         universe_df[meta_cols]
         .copy()
         .assign(cnpj=lambda x: x["fund_cnpj"])
-        .fillna({"subclass_id": _SUB_SENTINEL})
         .drop_duplicates(subset=["cnpj", "subclass_id"])
     )
+    before_merge = len(df)
     df = df.merge(
         meta.drop(columns=["fund_cnpj"]), on=["cnpj", "subclass_id"], how="left"
     )
-    df["subclass_id"] = df["subclass_id"].replace(_SUB_SENTINEL, np.nan)
+    if len(df) > before_merge:
+        logger.warning(
+            "metrics: merge expanded rows (cartesian product). Before: %d, After: %d",
+            before_merge,
+            len(df),
+        )
 
     df = _apply_tax_layer(df, cdi_window, cdi_annual, settings)
     df["investor_level"] = map_investor_level(df["target_investor"])
