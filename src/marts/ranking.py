@@ -49,6 +49,16 @@ def rank_funds(
     if investor_type not in _INVESTOR_ACCESS:
         raise ValueError(f"investor_type must be one of {list(_INVESTOR_ACCESS)}")
 
+    required_cols = {fs.col for fs in settings.scoring.cont_features} | {
+        "redemption_days",
+        "min_investment",
+        "investor_level",
+        "span_days",
+    }
+    missing = required_cols - set(df_enriched.columns)
+    if missing:
+        raise ValueError(f"metrics missing required columns: {missing}")
+
     sc = settings.scoring
     access = _INVESTOR_ACCESS[investor_type]
 
@@ -68,19 +78,24 @@ def rank_funds(
     eligible["s_span"] = 1.0 - np.exp(-sc.span_lambda * eligible["span_days"] / 365.0)
     lam_prazo = sc.liquidity_lambda[purpose]
     eligible["s_liquidity"] = np.exp(-lam_prazo * eligible["redemption_days"])
-    eligible["s_accessibility"] = np.exp(
-        -eligible["min_investment"].fillna(0) / sc.accessibility_scale
+    eligible["s_accessibility"] = eligible["min_investment"].apply(
+        lambda x: np.exp(-x / sc.accessibility_scale) if pd.notna(x) else np.nan
     )
 
     w = sc.weights[purpose][profile]
     score_cols = [f"s_{fs.col}" for fs in sc.cont_features] + ["s_span", "s_liquidity"]
 
+    if len(w) != len(score_cols):
+        raise ValueError(
+            f"weights[{purpose}][{profile}] has {len(w)} elements, "
+            f"expected {len(score_cols)}"
+        )
+
     if investor_type == "retail":
         scale = 1.0 - sc.accessibility_weight
-        eligible["score"] = (
-            sum(scale * wi * eligible[sc_col] for wi, sc_col in zip(w, score_cols))
-            + sc.accessibility_weight * eligible["s_accessibility"]
-        )
+        eligible["score"] = sum(
+            scale * wi * eligible[sc_col] for wi, sc_col in zip(w, score_cols)
+        ) + sc.accessibility_weight * eligible["s_accessibility"].fillna(0.5)
     else:
         eligible["score"] = sum(
             wi * eligible[sc_col] for wi, sc_col in zip(w, score_cols)
