@@ -71,12 +71,25 @@ def fetch_inf_diario_month(ym: str, force: bool = False) -> pd.DataFrame:
     """
     _ensure_cvm_dirs()
     url = f"{CVM_BASE_URL}/DOC/INF_DIARIO/DADOS/inf_diario_fi_{ym}.zip"
-    path = CVM_RAW / f"inf_diario_fi_{ym}.zip"
-    try:
-        download(url, path, force=force)
-    except requests.HTTPError as e:
-        logger.warning("skipping %s: %s", ym, e)
-        return pd.DataFrame()
+    stem = f"inf_diario_fi_{ym}"
+    current_ym = date.today().strftime("%Y%m")
+    if ym == current_ym:
+        # CVM updates the current month's file daily — use a dated filename
+        # so yesterday's cached copy is not reused.
+        path = snapshot_path(CVM_RAW, stem, ".zip")
+        try:
+            download(url, path, force=force)
+        except requests.HTTPError as e:
+            logger.warning("skipping %s: %s", ym, e)
+            return pd.DataFrame()
+        purge_old_snapshots(CVM_RAW, stem, ".zip", keep=path)
+    else:
+        path = CVM_RAW / f"{stem}.zip"
+        try:
+            download(url, path, force=force)
+        except requests.HTTPError as e:
+            logger.warning("skipping %s: %s", ym, e)
+            return pd.DataFrame()
 
     df = read_csv_or_zip(path)
 
