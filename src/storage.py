@@ -98,7 +98,7 @@ class DuckDBWarehouse:
         if df.empty:
             return 0
 
-        self._ensure_table(schema, table, df)
+        self._ensure_table_with_schema(schema, table, df)
         cols = self._col_list(schema, table, df)
 
         null_cols = df.isnull().sum()
@@ -190,3 +190,37 @@ class DuckDBWarehouse:
             f"SELECT * FROM _schema_src WHERE 1=0"
         )
         self._con.unregister("_schema_src")
+
+    def _ensure_table_with_schema(
+        self, schema: str, table: str, df: pd.DataFrame
+    ) -> None:
+        """Create or validate schema.table matches df columns; drop and recreate if mismatch."""
+        exists = self._con.execute(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema = ? AND table_name = ?",
+            [schema, table],
+        ).fetchone()
+
+        if exists:
+            existing_cols = set(
+                r[0]
+                for r in self._con.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema = ? AND table_name = ?",
+                    [schema, table],
+                ).fetchall()
+            )
+            expected_cols = set(df.columns)
+
+            if existing_cols != expected_cols:
+                logger.warning(
+                    "%s.%s schema mismatch: existing=%s, expected=%s. Dropping and recreating.",
+                    schema,
+                    table,
+                    sorted(existing_cols),
+                    sorted(expected_cols),
+                )
+                self._con.execute(f"DROP TABLE {schema}.{table}")
+                self._ensure_table(schema, table, df)
+        else:
+            self._ensure_table(schema, table, df)
