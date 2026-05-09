@@ -31,7 +31,10 @@ _DEFAULT_ARGS = {
     start_date=datetime(2025, 1, 1),
     catchup=False,
     default_args=_DEFAULT_ARGS,
-    params={"force": Param(False, type="boolean")},
+    params={
+        "force": Param(False, type="boolean"),
+        "history_start": Param("2021-01-01", type="string", format="date"),
+    },
     tags=["fund-ranking", "ingestion"],
 )
 def fund_ranking_ingest() -> None:
@@ -48,12 +51,13 @@ def fund_ranking_ingest() -> None:
 
     @task()
     def inf_diario(**context) -> None:
-        from src.config import Settings
+        from datetime import date
+
         from src.ingestion.ingest import ingest_inf_diario
         from src.storage import DuckDBWarehouse
 
         force = context["params"]["force"]
-        history_start = Settings.from_yaml().history_start
+        history_start = date.fromisoformat(context["params"]["history_start"])
         with DuckDBWarehouse(_db_path()) as db:
             ingest_inf_diario(db, force=force, history_start=history_start)
 
@@ -77,12 +81,13 @@ def fund_ranking_ingest() -> None:
 
     @task()
     def cdi(**context) -> None:
-        from src.config import Settings
+        from datetime import date
+
         from src.ingestion.ingest import ingest_cdi
         from src.storage import DuckDBWarehouse
 
         force = context["params"]["force"]
-        history_start = Settings.from_yaml().history_start
+        history_start = date.fromisoformat(context["params"]["history_start"])
         with DuckDBWarehouse(_db_path()) as db:
             ingest_cdi(db, force=force, history_start=history_start)
 
