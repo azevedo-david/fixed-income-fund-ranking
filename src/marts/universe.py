@@ -77,21 +77,38 @@ def build_universe(
         pd.Timestamp(reference_date)
         - pd.Timedelta(days=settings.universe.aum_lookback_days)
     ).date()
+
+    db._con.register("_eligible", eligible)
     agg = db.execute(
         """
-        SELECT fund_cnpj, subclass_id,
-               MEDIAN(aum)          AS median_aum,
-               MEDIAN(shareholders) AS median_holders
-        FROM staging.daily_quotes
-        WHERE date >= ? AND date <= ?
-        GROUP BY fund_cnpj, subclass_id
+        SELECT DISTINCT e.fund_cnpj, e.subclass_id,
+               COALESCE(dq_aum.median_aum, dq_null.median_aum) AS median_aum,
+               COALESCE(dq_aum.median_holders, dq_null.median_holders) AS median_holders
+        FROM _eligible e
+        LEFT JOIN (
+            SELECT fund_cnpj, subclass_id,
+                   MEDIAN(aum) AS median_aum,
+                   MEDIAN(shareholders) AS median_holders
+            FROM staging.daily_quotes
+            WHERE date >= ? AND date <= ? AND subclass_id IS NOT NULL
+            GROUP BY fund_cnpj, subclass_id
+        ) dq_aum ON e.fund_cnpj = dq_aum.fund_cnpj AND e.subclass_id = dq_aum.subclass_id
+        LEFT JOIN (
+            SELECT fund_cnpj,
+                   MEDIAN(aum) AS median_aum,
+                   MEDIAN(shareholders) AS median_holders
+            FROM staging.daily_quotes
+            WHERE date >= ? AND date <= ? AND subclass_id IS NULL
+            GROUP BY fund_cnpj
+        ) dq_null ON e.fund_cnpj = dq_null.fund_cnpj AND e.subclass_id IS NULL
+        WHERE COALESCE(dq_aum.median_aum, dq_null.median_aum) IS NOT NULL
         """,
-        [window_start, reference_date],
+        [window_start, reference_date, window_start, reference_date],
     ).df()
-    logger.debug("universe: %d fund-subclass combos from daily_quotes", len(agg))
+    db._con.unregister("_eligible")
+    logger.debug("universe: %d combos after aum merge", len(agg))
 
-    eligible = eligible.merge(agg, on=["fund_cnpj", "subclass_id"], how="inner")
-    logger.debug("universe: %d combos after aum merge", len(eligible))
+    eligible = agg
 
     eligible = eligible[
         (eligible["median_holders"].fillna(0) > settings.universe.min_cotistas)
@@ -99,16 +116,31 @@ def build_universe(
     ].reset_index(drop=True)
     logger.debug("universe: %d combos pass aum/holders threshold", len(eligible))
 
-    anbima_keep = anbima[
-        [
-            "fund_cnpj",
-            "subclass_id",
-            "target_taxation",
-            "redemption_days",
-            "min_initial_investment",
-        ]
-    ].rename(columns={"min_initial_investment": "min_investment"})
-    eligible = eligible.merge(anbima_keep, on=["fund_cnpj", "subclass_id"], how="left")
+    db._con.register("_eligible2", eligible)
+    db._con.register("_anbima", anbima)
+    eligible = db.execute(
+        """
+        SELECT e.*,
+               COALESCE(a_match.target_taxation, a_default.target_taxation) AS target_taxation,
+               COALESCE(a_match.redemption_days, a_default.redemption_days) AS redemption_days,
+               COALESCE(a_match.min_investment, a_default.min_investment) AS min_investment
+        FROM _eligible2 e
+        LEFT JOIN (
+            SELECT fund_cnpj, subclass_id, target_taxation, redemption_days,
+                   min_initial_investment AS min_investment
+            FROM _anbima
+            WHERE subclass_id IS NOT NULL
+        ) a_match ON e.fund_cnpj = a_match.fund_cnpj AND e.subclass_id = a_match.subclass_id
+        LEFT JOIN (
+            SELECT fund_cnpj, target_taxation, redemption_days,
+                   min_initial_investment AS min_investment
+            FROM _anbima
+            WHERE subclass_id IS NULL
+        ) a_default ON e.fund_cnpj = a_default.fund_cnpj AND e.subclass_id IS NULL
+        """,
+    ).df()
+    db._con.unregister("_eligible2")
+    db._con.unregister("_anbima")
 
     null_cnpj = eligible["fund_cnpj"].isna().sum()
     if null_cnpj > 0:
