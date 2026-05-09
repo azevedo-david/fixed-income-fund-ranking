@@ -66,6 +66,17 @@ def _cdi_annualised(cdi_daily: pd.Series, reference_date: pd.Timestamp) -> float
     return float((1.0 + s).prod() ** (252.0 / span) - 1.0)
 
 
+_NS = "__NS__"  # sentinel replacing NaN subclass_id during concat index alignment
+
+
+def _fill_subclass(df: pd.DataFrame | pd.Series) -> pd.DataFrame | pd.Series:
+    return df.rename(index={float("nan"): _NS}, level="subclass_id")
+
+
+def _restore_subclass(df: pd.DataFrame) -> pd.DataFrame:
+    return df.rename(index={_NS: float("nan")}, level="subclass_id")
+
+
 def compute_fund_metrics(
     ri: pd.DataFrame,
     cdi_daily: pd.Series,
@@ -80,17 +91,15 @@ def compute_fund_metrics(
     for label, value in cdi_w.items():
         trailing[f"alpha_{label}"] = trailing[f"return_{label}"] - value
 
-    return pd.concat(
-        [
-            trailing,
-            annualized_return(ri),
-            pct_months_above_cdi(monthly_returns(ri, cdi_daily)),
-            volatility_and_sharpe(ri),
-            max_drawdown(ri),
-            span_days(ri),
-        ],
-        axis=1,
-    )
+    parts = [
+        trailing,
+        annualized_return(ri),
+        pct_months_above_cdi(monthly_returns(ri, cdi_daily)),
+        volatility_and_sharpe(ri),
+        max_drawdown(ri),
+        span_days(ri),
+    ]
+    return _restore_subclass(pd.concat([_fill_subclass(p) for p in parts], axis=1))
 
 
 def _apply_tax_layer(
