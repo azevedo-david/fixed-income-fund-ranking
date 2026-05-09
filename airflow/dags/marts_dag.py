@@ -8,7 +8,7 @@ Requires Airflow Variable: duckdb_path — absolute path to the .duckdb file.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from airflow.decorators import dag, task
 from airflow.models import Variable
@@ -20,10 +20,7 @@ def _db_path() -> str:
     return Variable.get("duckdb_path")
 
 
-_DEFAULT_ARGS = {
-    "retries": 2,
-    "retry_delay": timedelta(seconds=30),
-}
+_DEFAULT_ARGS = {}
 
 
 @dag(

@@ -150,7 +150,7 @@ def _apply_tax_layer(
         lambda r: resolve_ir_rate(
             r.get("target_taxation"),
             r.get("fund_name"),
-            settings.tax.rates_by_tributacao,
+            settings.tax.rates_by_taxation,
             settings.tax.exempt_keywords,
             settings.tax.default_rate,
         ),
