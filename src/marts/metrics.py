@@ -183,44 +183,44 @@ def build_metrics(
     try:
         aligned = db.execute("""
             WITH fund_date_range AS (
-                SELECT fund_cnpj, subclass_id,
+                SELECT cnpj, subclass_id,
                        MIN(date) AS first_date,
                        MAX(date) AS last_date
                 FROM _daily
-                GROUP BY fund_cnpj, subclass_id
+                GROUP BY cnpj, subclass_id
             ),
             cdi_per_fund AS (
-                SELECT f.fund_cnpj, f.subclass_id, c.date, c.cdi_daily
+                SELECT f.cnpj, f.subclass_id, c.date, c.cdi_daily
                 FROM fund_date_range f
                 CROSS JOIN _cdi_ts c
                 WHERE c.date >= f.first_date AND c.date <= f.last_date
             ),
             with_quotes AS (
-                SELECT cpf.fund_cnpj, cpf.subclass_id, cpf.date, cpf.cdi_daily,
+                SELECT cpf.cnpj, cpf.subclass_id, cpf.date, cpf.cdi_daily,
                        d.return_daily, d.nav
                 FROM cdi_per_fund cpf
                 LEFT JOIN _daily d
-                    ON cpf.fund_cnpj = d.fund_cnpj
+                    ON cpf.cnpj = d.cnpj
                    AND cpf.subclass_id IS NOT DISTINCT FROM d.subclass_id
                    AND cpf.date = d.date
             ),
             ffilled AS (
-                SELECT fund_cnpj, subclass_id, date, cdi_daily,
+                SELECT cnpj, subclass_id, date, cdi_daily,
                        LAST_VALUE(return_daily IGNORE NULLS) OVER (
-                           PARTITION BY fund_cnpj, subclass_id
+                           PARTITION BY cnpj, subclass_id
                            ORDER BY date
                            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
                        ) AS return_daily,
                        LAST_VALUE(nav IGNORE NULLS) OVER (
-                           PARTITION BY fund_cnpj, subclass_id
+                           PARTITION BY cnpj, subclass_id
                            ORDER BY date
                            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
                        ) AS nav
                 FROM with_quotes
             )
-            SELECT fund_cnpj, subclass_id, date, return_daily, nav, cdi_daily
+            SELECT cnpj, subclass_id, date, return_daily, nav, cdi_daily
             FROM ffilled
-            ORDER BY fund_cnpj, subclass_id, date
+            ORDER BY cnpj, subclass_id, date
             """).df()
     finally:
         db._con.unregister("_daily")
