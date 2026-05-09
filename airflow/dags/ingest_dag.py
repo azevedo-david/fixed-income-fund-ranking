@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from airflow.decorators import dag, task
 from airflow.models import Variable
 from airflow.models.param import Param
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 
 
 def _db_path() -> str:
@@ -106,6 +107,13 @@ def fund_ranking_ingest() -> None:
 
         ingest_cleanup()
 
+    trigger_staging = TriggerDagRunOperator(
+        task_id="trigger_staging",
+        trigger_dag_id="fund_ranking_stage",
+        wait_for_completion=False,
+        reset_dag_run=True,
+    )
+
     (
         registro()
         >> inf_diario()
@@ -114,6 +122,7 @@ def fund_ranking_ingest() -> None:
         >> cdi()
         >> anbima()
         >> cleanup()
+        >> trigger_staging
     )
 
 

@@ -1,6 +1,7 @@
 """Airflow DAG: transform raw.* tables into staging.* tables.
 
-Runs weekly (Monday 8am), after the ingest DAG (Monday 6am).
+Triggered automatically by fund_ranking_ingest on successful completion.
+Can also be triggered manually (e.g. with force=True to rebuild from scratch).
 Tasks are chained sequentially because DuckDB allows only one write
 connection per file at a time.
 
@@ -28,7 +29,7 @@ _DEFAULT_ARGS = {
 
 @dag(
     dag_id="fund_ranking_stage",
-    schedule="0 8 * * 1",
+    schedule=None,
     start_date=datetime(2025, 1, 1),
     catchup=False,
     default_args=_DEFAULT_ARGS,
