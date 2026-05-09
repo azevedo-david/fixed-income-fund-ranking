@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import date
 
 import pandas as pd
 
@@ -27,12 +26,11 @@ _KNOWN_STATUSES = {
 
 class RegistryStager(BaseStager):
     dataset = "staging.registry"
+    raw_dataset = "raw.registro_classe"
     task_stage = "stage_registry"
     task_validate = "validate_registry"
 
-    def _fetch_raw(
-        self, db: DuckDBWarehouse, reference_date: date
-    ) -> pd.DataFrame | None:
+    def _fetch_raw(self, db: DuckDBWarehouse) -> pd.DataFrame | None:
         reference_date = db.execute(
             "SELECT MAX(reference_date) FROM raw.registro_classe"
         ).fetchone()[0]
@@ -53,7 +51,7 @@ class RegistryStager(BaseStager):
         df["reference_date"] = reference_date
         return df
 
-    def _build_checks(self, df: pd.DataFrame, reference_date: date) -> list[Check]:
+    def _build_checks(self, df: pd.DataFrame) -> list[Check]:
         return [
             self._check_row_count(df),
             self._check_no_null_cnpj(df),
@@ -61,7 +59,7 @@ class RegistryStager(BaseStager):
             self._check_active_status_present(df),
             self._check_unknown_statuses(df),
             self._check_inception_date_coverage(df),
-            self._check_freshness(df, reference_date),
+            self._check_freshness(df),
         ]
 
     def _clean(self, classe: pd.DataFrame, subclasse: pd.DataFrame) -> pd.DataFrame:
@@ -223,9 +221,9 @@ class RegistryStager(BaseStager):
         )
 
 
-def stage_registry(db: DuckDBWarehouse, reference_date: date) -> int:
-    return RegistryStager().stage(db, reference_date)
+def stage_registry(db: DuckDBWarehouse, force: bool = False) -> int:
+    return RegistryStager().stage(db, force=force)
 
 
-def validate_registry(db: DuckDBWarehouse, reference_date: date) -> list[Check]:
-    return RegistryStager().validate(db, reference_date)
+def validate_registry(db: DuckDBWarehouse) -> list[Check]:
+    return RegistryStager().validate(db)

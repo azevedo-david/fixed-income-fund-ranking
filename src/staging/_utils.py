@@ -49,7 +49,7 @@ def log_checks(
                 dataset,
                 c.name,
                 c.severity,
-                c.passed,
+                bool(c.passed),
                 c.value,
                 c.threshold,
                 c.message,

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import date
 
 import pandas as pd
 
@@ -41,12 +40,11 @@ _COLS = [
 
 class AnbimaStager(BaseStager):
     dataset = "staging.anbima"
+    raw_dataset = "raw.anbima_caracteristicas"
     task_stage = "stage_anbima"
     task_validate = "validate_anbima"
 
-    def _fetch_raw(
-        self, db: DuckDBWarehouse, reference_date: date
-    ) -> pd.DataFrame | None:
+    def _fetch_raw(self, db: DuckDBWarehouse) -> pd.DataFrame | None:
         reference_date = db.execute(
             "SELECT MAX(reference_date) FROM raw.anbima_caracteristicas"
         ).fetchone()[0]
@@ -63,11 +61,11 @@ class AnbimaStager(BaseStager):
         df["reference_date"] = reference_date
         return df
 
-    def _build_checks(self, df: pd.DataFrame, reference_date: date) -> list[Check]:
+    def _build_checks(self, df: pd.DataFrame) -> list[Check]:
         return [
             self._check_row_count(df),
             self._check_no_null_cnpj(df),
-            self._check_freshness(df, reference_date),
+            self._check_freshness(df),
         ]
 
     def _clean(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -125,9 +123,9 @@ class AnbimaStager(BaseStager):
         )
 
 
-def stage_anbima(db: DuckDBWarehouse, reference_date: date) -> int:
-    return AnbimaStager().stage(db, reference_date)
+def stage_anbima(db: DuckDBWarehouse, force: bool = False) -> int:
+    return AnbimaStager().stage(db, force=force)
 
 
-def validate_anbima(db: DuckDBWarehouse, reference_date: date) -> list[Check]:
-    return AnbimaStager().validate(db, reference_date)
+def validate_anbima(db: DuckDBWarehouse) -> list[Check]:
+    return AnbimaStager().validate(db)

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import date
 
 import numpy as np
 import pandas as pd
@@ -17,12 +16,11 @@ logger = logging.getLogger(__name__)
 
 class FeesStager(BaseStager):
     dataset = "staging.fees"
+    raw_dataset = "raw.cad_fi_hist_taxa_adm"
     task_stage = "stage_fees"
     task_validate = "validate_fees"
 
-    def _fetch_raw(
-        self, db: DuckDBWarehouse, reference_date: date
-    ) -> pd.DataFrame | None:
+    def _fetch_raw(self, db: DuckDBWarehouse) -> pd.DataFrame | None:
         adm_snap = db.execute(
             "SELECT MAX(reference_date) FROM raw.cad_fi_hist_taxa_adm"
         ).fetchone()[0]
@@ -61,13 +59,13 @@ class FeesStager(BaseStager):
         df["reference_date"] = adm_snap
         return df
 
-    def _build_checks(self, df: pd.DataFrame, reference_date: date) -> list[Check]:
+    def _build_checks(self, df: pd.DataFrame) -> list[Check]:
         return [
             self._check_row_count(df),
             self._check_no_null_cnpj(df),
             self._check_adm_fee_coverage(df),
             self._check_adm_fee_range(df),
-            self._check_freshness(df, reference_date),
+            self._check_freshness(df),
         ]
 
     def _clean(
@@ -221,9 +219,9 @@ class FeesStager(BaseStager):
         )
 
 
-def stage_fees(db: DuckDBWarehouse, reference_date: date) -> int:
-    return FeesStager().stage(db, reference_date)
+def stage_fees(db: DuckDBWarehouse, force: bool = False) -> int:
+    return FeesStager().stage(db, force=force)
 
 
-def validate_fees(db: DuckDBWarehouse, reference_date: date) -> list[Check]:
-    return FeesStager().validate(db, reference_date)
+def validate_fees(db: DuckDBWarehouse) -> list[Check]:
+    return FeesStager().validate(db)
