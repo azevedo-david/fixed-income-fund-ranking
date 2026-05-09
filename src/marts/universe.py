@@ -101,46 +101,40 @@ def build_universe(
     with _temp_table(db, "_eligible", eligible):
         result = db.execute(
             """
-            SELECT e.fund_cnpj, e.subclass_id, e.fund_name, e.inception_date,
-                   e.anbima_category, e.target_investor, e.share_class,
-                   e.fund_structure, e.adm_fee, e.has_perf_fee,
-                   COALESCE(dq_aum.median_aum, dq_null.median_aum) AS median_aum,
-                   COALESCE(dq_aum.median_holders, dq_null.median_holders) AS median_holders,
-                   COALESCE(a_match.target_taxation, a_default.target_taxation) AS target_taxation,
-                   COALESCE(a_match.redemption_days, a_default.redemption_days) AS redemption_days,
-                   COALESCE(a_match.min_investment, a_default.min_investment) AS min_investment
-            FROM _eligible e
-            LEFT JOIN (
+            WITH aum_metrics AS (
                 SELECT fund_cnpj, subclass_id,
                        MEDIAN(aum) AS median_aum,
                        MEDIAN(shareholders) AS median_holders
                 FROM staging.daily_quotes
-                WHERE date >= ? AND date <= ? AND subclass_id IS NOT NULL
+                WHERE date >= ? AND date <= ?
                 GROUP BY fund_cnpj, subclass_id
-            ) dq_aum ON e.fund_cnpj = dq_aum.fund_cnpj AND e.subclass_id = dq_aum.subclass_id
-            LEFT JOIN (
-                SELECT fund_cnpj,
-                       MEDIAN(aum) AS median_aum,
-                       MEDIAN(shareholders) AS median_holders
-                FROM staging.daily_quotes
-                WHERE date >= ? AND date <= ? AND subclass_id IS NULL
-                GROUP BY fund_cnpj
-            ) dq_null ON e.fund_cnpj = dq_null.fund_cnpj AND e.subclass_id IS NULL
-            LEFT JOIN (
-                SELECT fund_cnpj, subclass_id, target_taxation, redemption_days,
+            ),
+            anbima_enriched AS (
+                SELECT fund_cnpj, subclass_id,
+                       target_taxation, redemption_days,
                        min_initial_investment AS min_investment
                 FROM staging.anbima
-                WHERE subclass_id IS NOT NULL
-            ) a_match ON e.fund_cnpj = a_match.fund_cnpj AND e.subclass_id = a_match.subclass_id
-            LEFT JOIN (
-                SELECT DISTINCT fund_cnpj, target_taxation, redemption_days,
-                       min_initial_investment AS min_investment
-                FROM staging.anbima
-                WHERE subclass_id IS NULL
-            ) a_default ON e.fund_cnpj = a_default.fund_cnpj AND e.subclass_id IS NULL
-            WHERE COALESCE(dq_aum.median_aum, dq_null.median_aum) IS NOT NULL
+            )
+            SELECT e.fund_cnpj, e.subclass_id, e.fund_name, e.inception_date,
+                   e.anbima_category, e.target_investor, e.share_class,
+                   e.fund_structure, e.adm_fee, e.has_perf_fee,
+                   COALESCE(am_exact.median_aum, am_null.median_aum) AS median_aum,
+                   COALESCE(am_exact.median_holders, am_null.median_holders) AS median_holders,
+                   COALESCE(ae_exact.target_taxation, ae_null.target_taxation) AS target_taxation,
+                   COALESCE(ae_exact.redemption_days, ae_null.redemption_days) AS redemption_days,
+                   COALESCE(ae_exact.min_investment, ae_null.min_investment) AS min_investment
+            FROM _eligible e
+            LEFT JOIN aum_metrics am_exact
+                ON e.fund_cnpj = am_exact.fund_cnpj AND e.subclass_id = am_exact.subclass_id
+            LEFT JOIN aum_metrics am_null
+                ON e.fund_cnpj = am_null.fund_cnpj AND am_null.subclass_id IS NULL
+            LEFT JOIN anbima_enriched ae_exact
+                ON e.fund_cnpj = ae_exact.fund_cnpj AND e.subclass_id = ae_exact.subclass_id
+            LEFT JOIN anbima_enriched ae_null
+                ON e.fund_cnpj = ae_null.fund_cnpj AND ae_null.subclass_id IS NULL
+            WHERE COALESCE(am_exact.median_aum, am_null.median_aum) IS NOT NULL
             """,
-            [window_start, reference_date, window_start, reference_date],
+            [window_start, reference_date],
         ).df()
 
     eligible = result
