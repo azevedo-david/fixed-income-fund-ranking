@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from datetime import date
+from typing import Generator
 
 import pandas as pd
 
@@ -32,6 +34,18 @@ _UNIVERSE_COLS = [
 ]
 
 
+@contextmanager
+def _temp_table(
+    db: DuckDBWarehouse, name: str, df: pd.DataFrame
+) -> Generator[None, None, None]:
+    """Context manager for registering/unregistering temp tables with exception safety."""
+    db._con.register(name, df)
+    try:
+        yield
+    finally:
+        db._con.unregister(name)
+
+
 def _load_snapshot(db: DuckDBWarehouse, table: str, calc_date: date) -> pd.DataFrame:
     """Load the most recent snapshot from a staging table at or before calc_date."""
     return db.execute(
@@ -47,9 +61,12 @@ def build_universe(
     db: DuckDBWarehouse, reference_date: date, settings: Settings
 ) -> pd.DataFrame:
     """Build eligible fund universe keyed by (fund_cnpj, subclass_id)."""
+    if settings.universe.aum_lookback_days <= 0:
+        raise ValueError(
+            f"aum_lookback_days must be positive, got {settings.universe.aum_lookback_days}"
+        )
+
     registry = _load_snapshot(db, "staging.registry", reference_date)
-    fees = _load_snapshot(db, "staging.fees", reference_date)
-    anbima = _load_snapshot(db, "staging.anbima", reference_date)
 
     if registry.empty:
         logger.warning("universe: empty registry snapshot for %s", reference_date)
@@ -68,9 +85,12 @@ def build_universe(
     ].copy()
     logger.debug("universe: %d funds pass filter criteria", len(eligible))
 
-    fee_cols = fees[["fund_cnpj", "adm_fee", "has_perf_fee"]].drop_duplicates(
-        "fund_cnpj", keep="last"
-    )
+    fee_cols = db.execute(
+        "SELECT fund_cnpj, adm_fee, has_perf_fee "
+        "FROM staging.fees "
+        "WHERE reference_date = (SELECT MAX(reference_date) FROM staging.fees) "
+        "QUALIFY ROW_NUMBER() OVER (PARTITION BY fund_cnpj ORDER BY reference_date DESC) = 1"
+    ).df()
     eligible = eligible.merge(fee_cols, on="fund_cnpj", how="left")
 
     window_start = (
@@ -78,69 +98,69 @@ def build_universe(
         - pd.Timedelta(days=settings.universe.aum_lookback_days)
     ).date()
 
-    db._con.register("_eligible", eligible)
-    agg = db.execute(
-        """
-        SELECT DISTINCT e.fund_cnpj, e.subclass_id,
-               COALESCE(dq_aum.median_aum, dq_null.median_aum) AS median_aum,
-               COALESCE(dq_aum.median_holders, dq_null.median_holders) AS median_holders
-        FROM _eligible e
-        LEFT JOIN (
-            SELECT fund_cnpj, subclass_id,
-                   MEDIAN(aum) AS median_aum,
-                   MEDIAN(shareholders) AS median_holders
-            FROM staging.daily_quotes
-            WHERE date >= ? AND date <= ? AND subclass_id IS NOT NULL
-            GROUP BY fund_cnpj, subclass_id
-        ) dq_aum ON e.fund_cnpj = dq_aum.fund_cnpj AND e.subclass_id = dq_aum.subclass_id
-        LEFT JOIN (
-            SELECT fund_cnpj,
-                   MEDIAN(aum) AS median_aum,
-                   MEDIAN(shareholders) AS median_holders
-            FROM staging.daily_quotes
-            WHERE date >= ? AND date <= ? AND subclass_id IS NULL
-            GROUP BY fund_cnpj
-        ) dq_null ON e.fund_cnpj = dq_null.fund_cnpj AND e.subclass_id IS NULL
-        WHERE COALESCE(dq_aum.median_aum, dq_null.median_aum) IS NOT NULL
-        """,
-        [window_start, reference_date, window_start, reference_date],
-    ).df()
-    db._con.unregister("_eligible")
-    logger.debug("universe: %d combos after aum merge", len(agg))
+    with _temp_table(db, "_eligible", eligible):
+        result = db.execute(
+            """
+            SELECT e.fund_cnpj, e.subclass_id, e.fund_name, e.inception_date,
+                   e.anbima_category, e.target_investor, e.share_class,
+                   e.fund_structure, e.adm_fee, e.has_perf_fee,
+                   COALESCE(dq_aum.median_aum, dq_null.median_aum) AS median_aum,
+                   COALESCE(dq_aum.median_holders, dq_null.median_holders) AS median_holders,
+                   COALESCE(a_match.target_taxation, a_default.target_taxation) AS target_taxation,
+                   COALESCE(a_match.redemption_days, a_default.redemption_days) AS redemption_days,
+                   COALESCE(a_match.min_investment, a_default.min_investment) AS min_investment
+            FROM _eligible e
+            LEFT JOIN (
+                SELECT fund_cnpj, subclass_id,
+                       MEDIAN(aum) AS median_aum,
+                       MEDIAN(shareholders) AS median_holders
+                FROM staging.daily_quotes
+                WHERE date >= ? AND date <= ? AND subclass_id IS NOT NULL
+                GROUP BY fund_cnpj, subclass_id
+            ) dq_aum ON e.fund_cnpj = dq_aum.fund_cnpj AND e.subclass_id = dq_aum.subclass_id
+            LEFT JOIN (
+                SELECT fund_cnpj,
+                       MEDIAN(aum) AS median_aum,
+                       MEDIAN(shareholders) AS median_holders
+                FROM staging.daily_quotes
+                WHERE date >= ? AND date <= ? AND subclass_id IS NULL
+                GROUP BY fund_cnpj
+            ) dq_null ON e.fund_cnpj = dq_null.fund_cnpj AND e.subclass_id IS NULL
+            LEFT JOIN (
+                SELECT fund_cnpj, subclass_id, target_taxation, redemption_days,
+                       min_initial_investment AS min_investment
+                FROM staging.anbima
+                WHERE subclass_id IS NOT NULL
+            ) a_match ON e.fund_cnpj = a_match.fund_cnpj AND e.subclass_id = a_match.subclass_id
+            LEFT JOIN (
+                SELECT DISTINCT fund_cnpj, target_taxation, redemption_days,
+                       min_initial_investment AS min_investment
+                FROM staging.anbima
+                WHERE subclass_id IS NULL
+            ) a_default ON e.fund_cnpj = a_default.fund_cnpj AND e.subclass_id IS NULL
+            WHERE COALESCE(dq_aum.median_aum, dq_null.median_aum) IS NOT NULL
+            """,
+            [window_start, reference_date, window_start, reference_date],
+        ).df()
 
-    eligible = agg
+    eligible = result
+    logger.debug("universe: %d combos after joins", len(eligible))
 
     eligible = eligible[
         (eligible["median_holders"].fillna(0) > settings.universe.min_cotistas)
         & (eligible["median_aum"].fillna(0) > settings.universe.min_aum)
     ].reset_index(drop=True)
-    logger.debug("universe: %d combos pass aum/holders threshold", len(eligible))
 
-    db._con.register("_eligible2", eligible)
-    db._con.register("_anbima", anbima)
-    eligible = db.execute(
-        """
-        SELECT e.*,
-               COALESCE(a_match.target_taxation, a_default.target_taxation) AS target_taxation,
-               COALESCE(a_match.redemption_days, a_default.redemption_days) AS redemption_days,
-               COALESCE(a_match.min_investment, a_default.min_investment) AS min_investment
-        FROM _eligible2 e
-        LEFT JOIN (
-            SELECT fund_cnpj, subclass_id, target_taxation, redemption_days,
-                   min_initial_investment AS min_investment
-            FROM _anbima
-            WHERE subclass_id IS NOT NULL
-        ) a_match ON e.fund_cnpj = a_match.fund_cnpj AND e.subclass_id = a_match.subclass_id
-        LEFT JOIN (
-            SELECT fund_cnpj, target_taxation, redemption_days,
-                   min_initial_investment AS min_investment
-            FROM _anbima
-            WHERE subclass_id IS NULL
-        ) a_default ON e.fund_cnpj = a_default.fund_cnpj AND e.subclass_id IS NULL
-        """,
-    ).df()
-    db._con.unregister("_eligible2")
-    db._con.unregister("_anbima")
+    if eligible.empty:
+        logger.warning(
+            "universe: no funds pass thresholds (min_aum=%.0f, min_cotistas=%.0f) for %s",
+            settings.universe.min_aum,
+            settings.universe.min_cotistas,
+            reference_date,
+        )
+        return pd.DataFrame(columns=_UNIVERSE_COLS)
+
+    logger.debug("universe: %d combos pass aum/holders threshold", len(eligible))
 
     null_cnpj = eligible["fund_cnpj"].isna().sum()
     if null_cnpj > 0:
@@ -149,4 +169,4 @@ def build_universe(
 
     eligible["reference_date"] = reference_date
     logger.info("universe: %d eligible funds for %s", len(eligible), reference_date)
-    return eligible.reindex(columns=_UNIVERSE_COLS)
+    return eligible[_UNIVERSE_COLS]
