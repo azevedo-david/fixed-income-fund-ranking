@@ -27,19 +27,25 @@ from .compute.tax import apply_ir, net_series
 logger = logging.getLogger(__name__)
 
 
-def span_days(ri: pd.DataFrame) -> pd.Series:
-    """Calendar days between first and last observed quote per fund."""
-    dates = (
-        ri.reset_index().groupby(GROUP_KEY, dropna=False)["date"].agg(["min", "max"])
+def span_days(ri: pd.DataFrame) -> pd.DataFrame:
+    """Calendar days between first and last observed quote per fund.
+
+    Output: flat DataFrame with GROUP_KEY + span_days columns.
+    """
+    return (
+        ri.groupby(GROUP_KEY, dropna=False)["date"]
+        .agg(["min", "max"])
+        .assign(span_days=lambda d: (d["max"] - d["min"]).dt.days.astype("int64"))
+        .drop(columns=["min", "max"])
+        .reset_index()
     )
-    return (dates["max"] - dates["min"]).dt.days.rename("span_days").astype("int64")
 
 
 def filter_min_span(ri: pd.DataFrame, min_span_days: int) -> pd.DataFrame:
     """Drop funds with fewer than min_span_days of history."""
     span = span_days(ri)
-    keep = set(map(tuple, span[span >= min_span_days].index.tolist()))
-    return ri[ri.index.droplevel("date").isin(keep)]
+    keep = span[span["span_days"] >= min_span_days][GROUP_KEY]
+    return ri.merge(keep, on=GROUP_KEY, how="inner")
 
 
 def map_investor_level(publico_alvo: pd.Series) -> pd.Series:
@@ -72,7 +78,10 @@ def compute_fund_metrics(
     windows: dict[str, int],
     reference_date: date,
 ) -> pd.DataFrame:
-    """Compute trailing returns, alphas, and risk metrics per fund."""
+    """Compute trailing returns, alphas, and risk metrics per fund.
+
+    Output: flat DataFrame with GROUP_KEY + all metric columns.
+    """
     trailing = trailing_returns(ri, windows)
     cdi_w = cdi_window_returns(
         cdi_daily, reference_date=pd.Timestamp(reference_date), windows=windows
@@ -88,12 +97,10 @@ def compute_fund_metrics(
         max_drawdown(ri),
         span_days(ri),
     ]
-    # pd.concat(axis=1) aligns on index using equality — NaN != NaN breaks alignment.
-    # Merging on reset columns sidesteps this entirely.
-    result = parts[0].reset_index()
+    result = parts[0]
     for part in parts[1:]:
-        result = result.merge(part.reset_index(), on=GROUP_KEY, how="outer")
-    return result.set_index(GROUP_KEY)
+        result = result.merge(part, on=GROUP_KEY, how="outer")
+    return result
 
 
 def _apply_tax_layer(
@@ -104,10 +111,7 @@ def _apply_tax_layer(
 ) -> pd.DataFrame:
     """Apply IR tax rates and compute net returns/alphas.
 
-    Tax rate is resolved via:
-    1. Exact match on target_taxation in rates_by_taxation dict
-    2. If not found, check if fund_name contains exempt keywords → 0% tax
-    3. Otherwise use default_rate
+    Rate resolution: exact match on target_taxation → exempt keyword → default_rate.
     """
     df = df.copy()
 
@@ -126,8 +130,7 @@ def _apply_tax_layer(
             .str.contains(pattern, regex=True)
         )
         ir_rate.loc[unresolved] = np.where(is_exempt, 0.0, default_rate)
-    ir_rate = ir_rate.fillna(default_rate)
-    df["ir_rate"] = ir_rate
+    df["ir_rate"] = ir_rate.fillna(default_rate)
 
     cdi_ir = settings.tax.cdi_ir_rate
     labels = list(settings.windows.keys()) + ["annualized"]
@@ -242,12 +245,12 @@ def build_metrics(
         db._con.unregister("_daily")
         db._con.unregister("_cdi_ts")
 
-    ri = aligned.set_index(GROUP_KEY + ["date"])[["return_daily", "nav", "cdi_daily"]]
+    ri = aligned.copy()
     ri["excess_daily"] = ri["return_daily"] - ri["cdi_daily"]
 
-    funds_before_span = ri.index.droplevel("date").unique().shape[0]
+    funds_before_span = ri[GROUP_KEY].drop_duplicates().shape[0]
     ri = filter_min_span(ri, settings.universe.min_span_days)
-    funds_after_span = ri.index.droplevel("date").unique().shape[0]
+    funds_after_span = ri[GROUP_KEY].drop_duplicates().shape[0]
 
     if ri.empty:
         logger.warning(
@@ -270,8 +273,6 @@ def build_metrics(
     cdi_window = cdi_window_returns(cdi, ref, settings.windows)
     cdi_annual = _cdi_annualised(cdi, ref)
 
-    df = metrics.reset_index()
-
     meta_cols = [
         "fund_cnpj",
         "subclass_id",
@@ -289,12 +290,11 @@ def build_metrics(
         universe_df[meta_cols]
         .copy()
         .assign(cnpj=lambda x: x["fund_cnpj"])
+        .drop(columns=["fund_cnpj"])
         .drop_duplicates(subset=["cnpj", "subclass_id"])
     )
-    before_merge = len(df)
-    df = df.merge(
-        meta.drop(columns=["fund_cnpj"]), on=["cnpj", "subclass_id"], how="left"
-    )
+    before_merge = len(metrics)
+    df = metrics.merge(meta, on=GROUP_KEY, how="left")
     if len(df) > before_merge:
         logger.warning(
             "metrics: merge expanded rows (cartesian product). Before: %d, After: %d",
@@ -304,7 +304,6 @@ def build_metrics(
 
     df = _apply_tax_layer(df, cdi_window, cdi_annual, settings)
     df["investor_level"] = map_investor_level(df["target_investor"])
-
     df = df.rename(columns={"cnpj": "fund_cnpj"})
     df["reference_date"] = reference_date
     logger.info("metrics: %d rows computed for %s", len(df), reference_date)
