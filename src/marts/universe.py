@@ -61,11 +61,6 @@ def build_universe(
     db: DuckDBWarehouse, reference_date: date, settings: Settings
 ) -> pd.DataFrame:
     """Build eligible fund universe keyed by (fund_cnpj, subclass_id)."""
-    if settings.universe.aum_lookback_days <= 0:
-        raise ValueError(
-            f"aum_lookback_days must be positive, got {settings.universe.aum_lookback_days}"
-        )
-
     registry = _load_snapshot(db, "staging.registry", reference_date)
 
     if registry.empty:

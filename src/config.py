@@ -126,6 +126,17 @@ class Settings:
         with open(path) as f:
             cfg: dict[str, Any] = yaml.safe_load(f)
 
+        universe_raw = cfg["universe"]
+        universe = UniverseConfig(**universe_raw)
+        if universe.aum_lookback_days <= 0:
+            raise ValueError(
+                f"universe.aum_lookback_days must be positive, got {universe.aum_lookback_days}"
+            )
+
+        windows = {k: int(v) for k, v in cfg["windows"].items()}
+        if not windows:
+            raise ValueError("windows dict must not be empty")
+
         scoring_raw = cfg["scoring"]
         scoring = ScoringConfig(
             cont_features=[FeatureSpec(**f) for f in scoring_raw["cont_features"]],
@@ -160,8 +171,8 @@ class Settings:
             history_start=_parse_date(cfg.get("history_start", "2021-01-01")),
             reference_date=reference_date,
             force_download=bool(cfg.get("force_download", False)),
-            universe=UniverseConfig(**cfg["universe"]),
-            windows={k: int(v) for k, v in cfg["windows"].items()},
+            universe=universe,
+            windows=windows,
             tax=TaxConfig(
                 cdi_ir_rate=cfg["tax"]["cdi_ir_rate"],
                 rates_by_taxation=cfg["tax"]["rates_by_taxation"],

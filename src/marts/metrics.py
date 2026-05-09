@@ -56,26 +56,6 @@ def map_investor_level(publico_alvo: pd.Series) -> pd.Series:
     )
 
 
-def _build_indexed_returns(daily: pd.DataFrame, cdi_daily: pd.Series) -> pd.DataFrame:
-    """Build returns DataFrame with CDI alignment: ffill within each fund's date range."""
-    ri = daily.set_index(GROUP_KEY + ["date"])[["return_daily", "nav"]].sort_index()
-
-    fund_dates = pd.Index(
-        sorted(ri.index.get_level_values("date").unique()), name="date"
-    )
-    cdi_aligned = cdi_daily.reindex(fund_dates, fill_value=np.nan).ffill()
-    n_missing = int(cdi_aligned.isna().sum())
-    if n_missing:
-        logger.warning(
-            "CDI alignment: %d dates missing after ffill (before first CDI date or after last fund quote)",
-            n_missing,
-        )
-
-    ri = ri.join(cdi_aligned, on="date")
-    ri["excess_daily"] = ri["return_daily"] - ri["cdi_daily"]
-    return ri
-
-
 def _cdi_annualised(cdi_daily: pd.Series, reference_date: pd.Timestamp) -> float:
     s = cdi_daily[cdi_daily.index <= reference_date]
     span = (reference_date - s.index.min()).days
@@ -98,18 +78,16 @@ def compute_fund_metrics(
     for label, value in cdi_w.items():
         trailing[f"alpha_{label}"] = trailing[f"return_{label}"] - value
 
-    return _restore_subclasse_nan(
-        pd.concat(
-            [
-                trailing,
-                annualized_return(ri),
-                pct_months_above_cdi(monthly_returns(ri, cdi_daily)),
-                volatility_and_sharpe(ri),
-                max_drawdown(ri),
-                span_days(ri),
-            ],
-            axis=1,
-        )
+    return pd.concat(
+        [
+            trailing,
+            annualized_return(ri),
+            pct_months_above_cdi(monthly_returns(ri, cdi_daily)),
+            volatility_and_sharpe(ri),
+            max_drawdown(ri),
+            span_days(ri),
+        ],
+        axis=1,
     )
 
 
@@ -199,7 +177,58 @@ def build_metrics(
     )
 
     daily = daily_returns(quotes_df)
-    ri = _build_indexed_returns(daily, cdi)
+
+    db._con.register("_daily", daily)
+    db._con.register("_cdi_ts", cdi.reset_index().rename(columns={"index": "date"}))
+    try:
+        aligned = db.execute("""
+            WITH fund_date_range AS (
+                SELECT fund_cnpj, subclass_id,
+                       MIN(date) AS first_date,
+                       MAX(date) AS last_date
+                FROM _daily
+                GROUP BY fund_cnpj, subclass_id
+            ),
+            cdi_per_fund AS (
+                SELECT f.fund_cnpj, f.subclass_id, c.date, c.cdi_daily,
+                       ROW_NUMBER() OVER (PARTITION BY f.fund_cnpj, f.subclass_id ORDER BY c.date) AS rn
+                FROM fund_date_range f
+                CROSS JOIN _cdi_ts c
+                WHERE c.date >= f.first_date AND c.date <= f.last_date
+            ),
+            with_quotes AS (
+                SELECT cpf.fund_cnpj, cpf.subclass_id, cpf.date, cpf.cdi_daily,
+                       d.return_daily, d.nav
+                FROM cdi_per_fund cpf
+                LEFT JOIN _daily d
+                    ON cpf.fund_cnpj = d.fund_cnpj
+                   AND cpf.subclass_id IS NOT DISTINCT FROM d.subclass_id
+                   AND cpf.date = d.date
+            ),
+            ffilled AS (
+                SELECT fund_cnpj, subclass_id, date, cdi_daily,
+                       FIRST_VALUE(return_daily) OVER (
+                           PARTITION BY fund_cnpj, subclass_id
+                           ORDER BY date
+                           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                       ) FILTER (WHERE return_daily IS NOT NULL) AS return_daily,
+                       FIRST_VALUE(nav) OVER (
+                           PARTITION BY fund_cnpj, subclass_id
+                           ORDER BY date
+                           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                       ) FILTER (WHERE nav IS NOT NULL) AS nav
+                FROM with_quotes
+            )
+            SELECT fund_cnpj, subclass_id, date, return_daily, nav, cdi_daily
+            FROM ffilled
+            ORDER BY fund_cnpj, subclass_id, date
+            """).df()
+    finally:
+        db._con.unregister("_daily")
+        db._con.unregister("_cdi_ts")
+
+    ri = aligned.set_index(GROUP_KEY + ["date"])[["return_daily", "nav", "cdi_daily"]]
+    ri["excess_daily"] = ri["return_daily"] - ri["cdi_daily"]
 
     funds_before_span = ri.index.droplevel("date").unique().shape[0]
     ri = filter_min_span(ri, settings.universe.min_span_days)
