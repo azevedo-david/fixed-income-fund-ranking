@@ -15,7 +15,16 @@ from ..storage import DuckDBWarehouse
 logger = logging.getLogger(__name__)
 
 _NATURAL_KEY = ["fund_cnpj", "subclass_id", "date"]
-_GROUP_KEY = ["fund_cnpj", "subclass_id"]
+_COLS = [
+    "fund_cnpj",
+    "subclass_id",
+    "date",
+    "nav",
+    "aum",
+    "inflows",
+    "outflows",
+    "shareholders",
+]
 
 
 class DailyQuotesStager(BaseStager):
@@ -24,7 +33,12 @@ class DailyQuotesStager(BaseStager):
     task_validate = "validate_daily_quotes"
 
     def stage(self, db: DuckDBWarehouse, reference_date: date) -> int:
-        """Incremental upsert: fetch only rows newer than the last staged date."""
+        """Incremental upsert re-processing from the start of the last staged month.
+
+        Re-processing the last month (instead of only fetching net-new dates) mirrors
+        ingest_inf_diario's strategy: CVM sometimes publishes corrections to past months,
+        and upsert_timeseries makes the overwrite idempotent.
+        """
         df = self._fetch_raw(db, reference_date)
         if df is None or df.empty:
             logger.info("%s: no new data up to %s", self.task_stage, reference_date)
@@ -54,23 +68,45 @@ class DailyQuotesStager(BaseStager):
         self, db: DuckDBWarehouse, reference_date: date
     ) -> pd.DataFrame | None:
         last_date = db.get_max_date("staging", "daily_quotes", "date")
+
         if last_date is not None:
+            # Start of the last staged month so corrections published by CVM for
+            # that month are picked up (upsert_timeseries makes the re-write idempotent).
+            from_date = last_date.replace(day=1)
             raw = db.execute(
-                "SELECT * FROM raw.inf_diario WHERE DT_COMPTC > ? AND DT_COMPTC <= ?",
-                [last_date, reference_date],
+                "SELECT * FROM raw.inf_diario WHERE DT_COMPTC >= ? AND DT_COMPTC <= ?",
+                [from_date, reference_date],
+            ).df()
+            # Seed the ffill with the last known NAV per fund from before the
+            # re-processing window so bad zeros at the window boundary are filled.
+            seeds = db.execute(
+                """
+                SELECT fund_cnpj, subclass_id, date, nav
+                FROM staging.daily_quotes
+                WHERE date < ?
+                QUALIFY ROW_NUMBER() OVER (
+                    PARTITION BY fund_cnpj, subclass_id ORDER BY date DESC
+                ) = 1
+                """,
+                [from_date],
             ).df()
         else:
             raw = db.execute(
                 "SELECT * FROM raw.inf_diario WHERE DT_COMPTC <= ?",
                 [reference_date],
             ).df()
+            seeds = None
 
         if raw.empty:
             return None
 
-        return self._clean(raw)
+        return self._clean(
+            raw, seeds if seeds is not None and not seeds.empty else None
+        )
 
-    def _clean(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _clean(
+        self, df: pd.DataFrame, seeds: pd.DataFrame | None = None
+    ) -> pd.DataFrame:
         out = df.copy()
 
         row_key = ["CNPJ_FUNDO_CLASSE", "ID_SUBCLASSE", "DT_COMPTC"]
@@ -93,7 +129,7 @@ class DailyQuotesStager(BaseStager):
                 logger.debug("%s: dropped %d ghost rows", self.task_stage, n_dead)
             out = out[~mask_dead].reset_index(drop=True)
 
-        # quota=0 on an active fund is a CVM reporting error — mask and forward-fill
+        # quota=0 on an active fund is a CVM reporting error — mask before ffill
         mask_zero = out["VL_QUOTA"] == 0
         if "NR_COTST" in out.columns and "VL_PATRIM_LIQ" in out.columns:
             active = (out["NR_COTST"].fillna(0) > 0) | (
@@ -110,10 +146,7 @@ class DailyQuotesStager(BaseStager):
             )
             out.loc[mask_bad_zero, "VL_QUOTA"] = np.nan
 
-        group_key = ["CNPJ_FUNDO_CLASSE", "ID_SUBCLASSE"]
-        out["VL_QUOTA"] = out.groupby(group_key, dropna=False)["VL_QUOTA"].ffill()
-
-        return out.rename(
+        out = out.rename(
             columns={
                 "CNPJ_FUNDO_CLASSE": "fund_cnpj",
                 "ID_SUBCLASSE": "subclass_id",
@@ -124,18 +157,32 @@ class DailyQuotesStager(BaseStager):
                 "RESG_DIA": "outflows",
                 "NR_COTST": "shareholders",
             }
-        )[
-            [
-                "fund_cnpj",
-                "subclass_id",
-                "date",
-                "nav",
-                "aum",
-                "inflows",
-                "outflows",
-                "shareholders",
-            ]
-        ]
+        )[_COLS]
+
+        if seeds is not None and not seeds.empty:
+            # Prepend seed rows (last known NAV per fund before the batch window)
+            # so the ffill can cross the incremental boundary.
+            seed_rows = seeds[["fund_cnpj", "subclass_id", "date", "nav"]].reindex(
+                columns=_COLS
+            )
+            seed_rows["_seed"] = True
+            out["_seed"] = False
+            combined = pd.concat([seed_rows, out], ignore_index=True).sort_values(
+                ["fund_cnpj", "subclass_id", "date"]
+            )
+            combined["nav"] = combined.groupby(
+                ["fund_cnpj", "subclass_id"], dropna=False
+            )["nav"].ffill()
+            return (
+                combined[~combined["_seed"]]
+                .drop(columns=["_seed"])
+                .reset_index(drop=True)
+            )
+
+        out["nav"] = out.groupby(["fund_cnpj", "subclass_id"], dropna=False)[
+            "nav"
+        ].ffill()
+        return out
 
     # --- checks ---
 
