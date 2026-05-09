@@ -92,6 +92,7 @@ class Settings:
     rankings: list[RankingCombo]
     top_n: int
     output: OutputConfig
+    db_path: Path = PROJECT_ROOT / "data" / "fund_ranking.duckdb"
 
     @property
     def max_window_months(self) -> int:
