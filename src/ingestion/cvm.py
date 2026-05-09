@@ -13,7 +13,6 @@ from ..config import CVM_BASE_URL, RAW_DIR, ensure_dirs
 from ._utils import (
     CSV_READ_KWARGS,
     download,
-    purge_old_snapshots,
     read_csv_or_zip,
     snapshot_path,
     today_stamp,
@@ -50,7 +49,6 @@ def fetch_registro_fundo_classe(force: bool = False) -> dict[str, pd.DataFrame]:
     zip_path = snapshot_path(CVM_RAW, "registro_fundo_classe", ".zip", today)
     url = f"{CVM_BASE_URL}/CAD/DADOS/registro_fundo_classe.zip"
     download(url, zip_path, force=force)
-    purge_old_snapshots(CVM_RAW, "registro_fundo_classe", ".zip", keep=zip_path)
 
     tables: dict[str, pd.DataFrame] = {}
     with zipfile.ZipFile(zip_path) as zf:
@@ -77,19 +75,14 @@ def fetch_inf_diario_month(ym: str, force: bool = False) -> pd.DataFrame:
         # CVM updates the current month's file daily — use a dated filename
         # so yesterday's cached copy is not reused.
         path = snapshot_path(CVM_RAW, stem, ".zip")
-        try:
-            download(url, path, force=force)
-        except requests.HTTPError as e:
-            logger.warning("skipping %s: %s", ym, e)
-            return pd.DataFrame()
-        purge_old_snapshots(CVM_RAW, stem, ".zip", keep=path)
     else:
         path = CVM_RAW / f"{stem}.zip"
-        try:
-            download(url, path, force=force)
-        except requests.HTTPError as e:
-            logger.warning("skipping %s: %s", ym, e)
-            return pd.DataFrame()
+
+    try:
+        download(url, path, force=force)
+    except requests.HTTPError as e:
+        logger.warning("skipping %s: %s", ym, e)
+        return pd.DataFrame()
 
     df = read_csv_or_zip(path)
 
@@ -117,12 +110,11 @@ def fetch_extrato(year: int, force: bool = False) -> pd.DataFrame:
     url = f"{CVM_BASE_URL}/DOC/EXTRATO/DADOS/extrato_fi_{year}.csv"
 
     if year == date.today().year:
-        stem = f"extrato_fi_{year}"
-        path = snapshot_path(CVM_RAW, stem, ".csv")
-        download(url, path, force=force)
-        purge_old_snapshots(CVM_RAW, stem, ".csv", keep=path)
+        path = snapshot_path(CVM_RAW, f"extrato_fi_{year}", ".csv")
     else:
-        path = download(url, CVM_RAW / f"extrato_fi_{year}.csv", force=force)
+        path = CVM_RAW / f"extrato_fi_{year}.csv"
+
+    download(url, path, force=force)
     return read_csv_or_zip(path)
 
 
@@ -138,7 +130,6 @@ def fetch_cad_fi_hist(
     zip_path = snapshot_path(CVM_RAW, "cad_fi_hist", ".zip")
     url = f"{CVM_BASE_URL}/CAD/DADOS/cad_fi_hist.zip"
     download(url, zip_path, force=force)
-    purge_old_snapshots(CVM_RAW, "cad_fi_hist", ".zip", keep=zip_path)
 
     wanted = set(members) if members else None
     out: dict[str, pd.DataFrame] = {}

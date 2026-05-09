@@ -41,13 +41,6 @@ def snapshot_path(
     return directory / f"{stem}_{today or today_stamp()}{ext}"
 
 
-def purge_old_snapshots(directory: Path, stem: str, ext: str, keep: Path) -> None:
-    """Delete all ``{stem}_*{ext}`` files in ``directory`` except ``keep``."""
-    for p in directory.glob(f"{stem}_*{ext}"):
-        if p.resolve() != keep.resolve():
-            p.unlink(missing_ok=True)
-
-
 def download(url: str, dest: Path, force: bool = False, timeout: int = 120) -> Path:
     """Stream-download ``url`` to ``dest`` with a progress bar. Cached on disk."""
     if dest.exists() and not force:
