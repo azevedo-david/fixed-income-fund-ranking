@@ -179,6 +179,7 @@ CREATE TABLE IF NOT EXISTS staging.daily_quotes (
     inflows      DOUBLE,
     outflows     DOUBLE,
     shareholders INTEGER,
+    created_at   TIMESTAMPTZ DEFAULT current_timestamp,
     updated_at   TIMESTAMPTZ DEFAULT current_timestamp
 )"""
 
@@ -199,6 +200,7 @@ STAGING_CDI_RATES = """\
 CREATE TABLE IF NOT EXISTS staging.cdi_rates (
     date       DATE        NOT NULL,
     rate       DOUBLE      NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT current_timestamp,
     updated_at TIMESTAMPTZ DEFAULT current_timestamp
 )"""
 
