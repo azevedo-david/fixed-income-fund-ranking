@@ -160,15 +160,14 @@ CREATE TABLE IF NOT EXISTS staging.registry (
 
 STAGING_DAILY_QUOTES = """\
 CREATE TABLE IF NOT EXISTS staging.daily_quotes (
-    fund_cnpj      VARCHAR NOT NULL,
-    subclass_id    VARCHAR,
-    date           DATE    NOT NULL,
-    nav            DOUBLE,
-    aum            DOUBLE,
-    inflows        DOUBLE,
-    outflows       DOUBLE,
-    shareholders   INTEGER,
-    reference_date DATE    NOT NULL
+    fund_cnpj    VARCHAR NOT NULL,
+    subclass_id  VARCHAR,
+    date         DATE    NOT NULL,
+    nav          DOUBLE,
+    aum          DOUBLE,
+    inflows      DOUBLE,
+    outflows     DOUBLE,
+    shareholders INTEGER
 )"""
 
 STAGING_FEES = """\
