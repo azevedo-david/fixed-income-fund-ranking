@@ -48,10 +48,8 @@ class DailyQuotesStager(BaseStager):
         return rows
 
     def validate(self, db: DuckDBWarehouse, reference_date: date) -> list[Check]:
-        """Validate the full timeseries up to reference_date."""
-        df = db.execute(
-            "SELECT * FROM staging.daily_quotes WHERE date <= ?", [reference_date]
-        ).df()
+        """Validate the full staged timeseries; reference_date is used only for freshness checks."""
+        df = db.execute("SELECT * FROM staging.daily_quotes").df()
         checks = self._build_checks(df, reference_date)
         log_checks(db, checks, self.dataset, self.task_validate, reference_date)
         failed = [c for c in checks if not c.passed and c.severity == "error"]
@@ -74,8 +72,8 @@ class DailyQuotesStager(BaseStager):
             # that month are picked up (upsert_timeseries makes the re-write idempotent).
             from_date = last_date.replace(day=1)
             raw = db.execute(
-                "SELECT * FROM raw.inf_diario WHERE DT_COMPTC >= ? AND DT_COMPTC <= ?",
-                [from_date, reference_date],
+                "SELECT * FROM raw.inf_diario WHERE DT_COMPTC >= ?",
+                [from_date],
             ).df()
             # Seed the ffill with the last known NAV per fund from before the
             # re-processing window so bad zeros at the window boundary are filled.
@@ -91,10 +89,7 @@ class DailyQuotesStager(BaseStager):
                 [from_date],
             ).df()
         else:
-            raw = db.execute(
-                "SELECT * FROM raw.inf_diario WHERE DT_COMPTC <= ?",
-                [reference_date],
-            ).df()
+            raw = db.execute("SELECT * FROM raw.inf_diario").df()
             seeds = None
 
         if raw.empty:
@@ -186,9 +181,7 @@ class DailyQuotesStager(BaseStager):
 
     # --- checks ---
 
-    def _build_checks(
-        self, df: pd.DataFrame, reference_date: date | None = None
-    ) -> list[Check]:
+    def _build_checks(self, df: pd.DataFrame, reference_date: date) -> list[Check]:
         return [
             self._check_row_count(df),
             self._check_no_null_cnpj(df),

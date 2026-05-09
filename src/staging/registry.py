@@ -33,26 +33,27 @@ class RegistryStager(BaseStager):
     def _fetch_raw(
         self, db: DuckDBWarehouse, reference_date: date
     ) -> pd.DataFrame | None:
-        downloaded_at = db.execute(
-            "SELECT MAX(downloaded_at) FROM raw.registro_classe WHERE downloaded_at <= ?",
-            [reference_date],
+        reference_date = db.execute(
+            "SELECT MAX(reference_date) FROM raw.registro_classe"
         ).fetchone()[0]
 
-        if downloaded_at is None:
+        if reference_date is None:
             return None
 
         classe = db.execute(
-            "SELECT * FROM raw.registro_classe WHERE downloaded_at = ?",
-            [downloaded_at],
+            "SELECT * FROM raw.registro_classe WHERE reference_date = ?",
+            [reference_date],
         ).df()
         subclasse = db.execute(
-            "SELECT * FROM raw.registro_subclasse WHERE downloaded_at = ?",
-            [downloaded_at],
+            "SELECT * FROM raw.registro_subclasse WHERE reference_date = ?",
+            [reference_date],
         ).df()
 
-        return self._clean(classe, subclasse)
+        df = self._clean(classe, subclasse)
+        df["reference_date"] = reference_date
+        return df
 
-    def _build_checks(self, df: pd.DataFrame) -> list[Check]:
+    def _build_checks(self, df: pd.DataFrame, reference_date: date) -> list[Check]:
         return [
             self._check_row_count(df),
             self._check_no_null_cnpj(df),
@@ -60,6 +61,7 @@ class RegistryStager(BaseStager):
             self._check_active_status_present(df),
             self._check_unknown_statuses(df),
             self._check_inception_date_coverage(df),
+            self._check_freshness(df, reference_date),
         ]
 
     def _clean(self, classe: pd.DataFrame, subclasse: pd.DataFrame) -> pd.DataFrame:

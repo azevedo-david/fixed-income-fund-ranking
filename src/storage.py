@@ -68,13 +68,13 @@ class DuckDBWarehouse:
         schema: str,
         table: str,
         df: pd.DataFrame,
-        downloaded_at: date,
+        reference_date: date,
     ) -> int:
-        """Insert df into schema.table with a downloaded_at column added; never modifies existing rows."""
+        """Insert df into schema.table with a reference_date column added; never modifies existing rows."""
         if df.empty:
             return 0
         df = df.copy()
-        df["downloaded_at"] = downloaded_at
+        df["reference_date"] = reference_date
         self._ensure_table(schema, table, df)
         cols = self._col_list(schema, table, df)
         self._con.register("_snapshot_src", df)

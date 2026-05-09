@@ -24,29 +24,26 @@ class FeesStager(BaseStager):
         self, db: DuckDBWarehouse, reference_date: date
     ) -> pd.DataFrame | None:
         adm_snap = db.execute(
-            "SELECT MAX(downloaded_at) FROM raw.cad_fi_hist_taxa_adm WHERE downloaded_at <= ?",
-            [reference_date],
+            "SELECT MAX(reference_date) FROM raw.cad_fi_hist_taxa_adm"
         ).fetchone()[0]
 
         if adm_snap is None:
             return None
 
         perf_snap = db.execute(
-            "SELECT MAX(downloaded_at) FROM raw.cad_fi_hist_taxa_perfm WHERE downloaded_at <= ?",
-            [reference_date],
+            "SELECT MAX(reference_date) FROM raw.cad_fi_hist_taxa_perfm"
         ).fetchone()[0]
         ext_snap = db.execute(
-            "SELECT MAX(downloaded_at) FROM raw.extrato_fi WHERE downloaded_at <= ?",
-            [reference_date],
+            "SELECT MAX(reference_date) FROM raw.extrato_fi"
         ).fetchone()[0]
 
         adm_raw = db.execute(
-            "SELECT * FROM raw.cad_fi_hist_taxa_adm WHERE downloaded_at = ?",
+            "SELECT * FROM raw.cad_fi_hist_taxa_adm WHERE reference_date = ?",
             [adm_snap],
         ).df()
         perf_raw = (
             db.execute(
-                "SELECT * FROM raw.cad_fi_hist_taxa_perfm WHERE downloaded_at = ?",
+                "SELECT * FROM raw.cad_fi_hist_taxa_perfm WHERE reference_date = ?",
                 [perf_snap],
             ).df()
             if perf_snap
@@ -54,20 +51,23 @@ class FeesStager(BaseStager):
         )
         ext_raw = (
             db.execute(
-                "SELECT * FROM raw.extrato_fi WHERE downloaded_at = ?", [ext_snap]
+                "SELECT * FROM raw.extrato_fi WHERE reference_date = ?", [ext_snap]
             ).df()
             if ext_snap
             else pd.DataFrame()
         )
 
-        return self._clean(adm_raw, perf_raw, ext_raw)
+        df = self._clean(adm_raw, perf_raw, ext_raw)
+        df["reference_date"] = adm_snap
+        return df
 
-    def _build_checks(self, df: pd.DataFrame) -> list[Check]:
+    def _build_checks(self, df: pd.DataFrame, reference_date: date) -> list[Check]:
         return [
             self._check_row_count(df),
             self._check_no_null_cnpj(df),
             self._check_adm_fee_coverage(df),
             self._check_adm_fee_range(df),
+            self._check_freshness(df, reference_date),
         ]
 
     def _clean(

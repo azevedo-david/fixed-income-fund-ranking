@@ -25,17 +25,13 @@ logger = logging.getLogger(__name__)
 _HISTORY_START = date(2021, 1, 1)
 
 
-def ingest_raw(
-    db: DuckDBWarehouse,
-    reference_date: date,
-    force: bool = False,
-) -> None:
-    """CLI convenience wrapper — runs all sources in dependency order then cleans up raw files."""
+def ingest_raw(db: DuckDBWarehouse, force: bool = False) -> None:
+    """Run all sources in dependency order then clean up raw files."""
     ingest_registro(db, force)
-    ingest_inf_diario(db, reference_date, force)
+    ingest_inf_diario(db, force)
     ingest_cad_fi_hist(db, force)
-    ingest_extrato(db, reference_date, force)
-    ingest_cdi(db, reference_date, force)
+    ingest_extrato(db, force)
+    ingest_cdi(db, force)
     ingest_anbima(db, force)
     ingest_cleanup()
 
@@ -48,7 +44,7 @@ def _snapshot_loaded_today(db: DuckDBWarehouse, schema: str, table: str) -> bool
     ).fetchone()
     if not exists:
         return False
-    row = db.execute(f"SELECT MAX(downloaded_at) FROM {schema}.{table}").fetchone()
+    row = db.execute(f"SELECT MAX(reference_date) FROM {schema}.{table}").fetchone()
     return bool(row and row[0] == date.today())
 
 
@@ -61,17 +57,18 @@ def ingest_registro(db: DuckDBWarehouse, force: bool = False) -> None:
     tables = fetch_registro_fundo_classe(force=force)
     for table_key in ("registro_classe", "registro_subclasse"):
         if table_key in tables:
-            db.append_snapshot("raw", table_key, tables[table_key], downloaded_at=today)
+            db.append_snapshot(
+                "raw", table_key, tables[table_key], reference_date=today
+            )
     logger.info("ingest registro: done")
 
 
-def ingest_inf_diario(
-    db: DuckDBWarehouse, reference_date: date, force: bool = False
-) -> None:
+def ingest_inf_diario(db: DuckDBWarehouse, force: bool = False) -> None:
     """Incrementally upsert monthly CVM daily-quote files into raw.inf_diario."""
+    today = date.today()
     max_dt = db.get_max_date("raw", "inf_diario", "DT_COMPTC")
     start = max_dt if max_dt else _HISTORY_START
-    months = yyyymm_range(start, reference_date)
+    months = yyyymm_range(start, today)
     for ym in tqdm(months, desc="inf_diario", unit="month"):
         df = fetch_inf_diario_month(ym, force=force)
         if not df.empty:
@@ -93,29 +90,28 @@ def ingest_cad_fi_hist(db: DuckDBWarehouse, force: bool = False) -> None:
     members = ["cad_fi_hist_taxa_adm", "cad_fi_hist_taxa_perfm"]
     tables = fetch_cad_fi_hist(members=members, force=force)
     for name, df in tables.items():
-        db.append_snapshot("raw", name, df, downloaded_at=today)
+        db.append_snapshot("raw", name, df, reference_date=today)
     logger.info("ingest cad_fi_hist: done")
 
 
-def ingest_extrato(
-    db: DuckDBWarehouse, reference_date: date, force: bool = False
-) -> None:
-    """Fetch CVM extrato_fi for reference_date's year and append today's snapshot."""
+def ingest_extrato(db: DuckDBWarehouse, force: bool = False) -> None:
+    """Fetch CVM extrato_fi for the current year and append today's snapshot."""
     today = date.today()
     if not force and _snapshot_loaded_today(db, "raw", "extrato_fi"):
         logger.info("ingest extrato: today's snapshot already loaded, skipping")
         return
-    df = fetch_extrato(reference_date.year, force=force)
+    df = fetch_extrato(today.year, force=force)
     df = df[["CNPJ_FUNDO_CLASSE", "DT_COMPTC", "TAXA_ADM", "EXISTE_TAXA_PERFM"]]
-    db.append_snapshot("raw", "extrato_fi", df, downloaded_at=today)
+    db.append_snapshot("raw", "extrato_fi", df, reference_date=today)
     logger.info("ingest extrato: done")
 
 
-def ingest_cdi(db: DuckDBWarehouse, reference_date: date, force: bool = False) -> None:
+def ingest_cdi(db: DuckDBWarehouse, force: bool = False) -> None:
     """Incrementally upsert BCB daily CDI rates into raw.cdi_daily."""
+    today = date.today()
     max_dt = db.get_max_date("raw", "cdi_daily", "date")
     start = _HISTORY_START if force else (max_dt if max_dt else _HISTORY_START)
-    df = fetch_cdi_daily(start=start, end=reference_date)
+    df = fetch_cdi_daily(start=start, end=today)
     if not df.empty:
         db.upsert_timeseries("raw", "cdi_daily", df, natural_key=["date"])
     logger.info("ingest cdi_daily: %d rows", len(df))
@@ -128,7 +124,7 @@ def ingest_anbima(db: DuckDBWarehouse, force: bool = False) -> None:
         logger.info("ingest anbima: today's snapshot already loaded, skipping")
         return
     df = fetch_caracteristicas()
-    db.append_snapshot("raw", "anbima_caracteristicas", df, downloaded_at=today)
+    db.append_snapshot("raw", "anbima_caracteristicas", df, reference_date=today)
     logger.info("ingest anbima: done")
 
 

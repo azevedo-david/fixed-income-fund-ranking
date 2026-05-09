@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS raw.registro_classe (
     Custodiante                              VARCHAR,
     CNPJ_Controlador                         DOUBLE,
     Controlador                              VARCHAR,
-    downloaded_at                            DATE NOT NULL
+    reference_date                           DATE        NOT NULL,
+    created_at                               TIMESTAMPTZ DEFAULT current_timestamp
 )"""
 
 RAW_REGISTRO_SUBCLASSE = """\
@@ -51,7 +52,8 @@ CREATE TABLE IF NOT EXISTS raw.registro_subclasse (
     Previdenciario                      VARCHAR,
     Exclusivo_INR                       VARCHAR,
     Exclusivo_Previdencia_Complementar  VARCHAR,
-    downloaded_at                       DATE NOT NULL
+    reference_date                      DATE        NOT NULL,
+    created_at                          TIMESTAMPTZ DEFAULT current_timestamp
 )"""
 
 RAW_INF_DIARIO = """\
@@ -64,7 +66,9 @@ CREATE TABLE IF NOT EXISTS raw.inf_diario (
     VL_PATRIM_LIQ     DOUBLE,
     CAPTC_DIA         DOUBLE,
     RESG_DIA          DOUBLE,
-    NR_COTST          INTEGER
+    NR_COTST          INTEGER,
+    created_at        TIMESTAMPTZ DEFAULT current_timestamp,
+    updated_at        TIMESTAMPTZ DEFAULT current_timestamp
 )"""
 
 RAW_CAD_FI_HIST_TAXA_ADM = """\
@@ -74,7 +78,8 @@ CREATE TABLE IF NOT EXISTS raw.cad_fi_hist_taxa_adm (
     TAXA_ADM          DOUBLE,
     INF_TAXA_ADM      VARCHAR,
     DT_INI_TAXA_ADM   DATE,
-    downloaded_at     DATE NOT NULL
+    reference_date    DATE        NOT NULL,
+    created_at        TIMESTAMPTZ DEFAULT current_timestamp
 )"""
 
 RAW_CAD_FI_HIST_TAXA_PERFM = """\
@@ -84,7 +89,8 @@ CREATE TABLE IF NOT EXISTS raw.cad_fi_hist_taxa_perfm (
     VL_TAXA_PERFM       DOUBLE,
     DS_TAXA_PERFM       VARCHAR,
     DT_INI_TAXA_PERFM   DATE,
-    downloaded_at       DATE NOT NULL
+    reference_date      DATE        NOT NULL,
+    created_at          TIMESTAMPTZ DEFAULT current_timestamp
 )"""
 
 RAW_EXTRATO_FI = """\
@@ -93,7 +99,8 @@ CREATE TABLE IF NOT EXISTS raw.extrato_fi (
     DT_COMPTC           DATE,
     TAXA_ADM            DOUBLE,
     EXISTE_TAXA_PERFM   VARCHAR,
-    downloaded_at       DATE NOT NULL
+    reference_date      DATE        NOT NULL,
+    created_at          TIMESTAMPTZ DEFAULT current_timestamp
 )"""
 
 # ANBIMA xlsx has Portuguese column names with accents — stored as-is from the source file.
@@ -121,13 +128,16 @@ CREATE TABLE IF NOT EXISTS raw.anbima_caracteristicas (
     "Cota de Abertura"                VARCHAR,
     "Prazo Pagamento Resgate em dias" INTEGER,
     "Código CVM Subclasse"            VARCHAR,
-    downloaded_at                     DATE NOT NULL
+    reference_date                    DATE        NOT NULL,
+    created_at                        TIMESTAMPTZ DEFAULT current_timestamp
 )"""
 
 RAW_CDI_DAILY = """\
 CREATE TABLE IF NOT EXISTS raw.cdi_daily (
-    date  DATE   NOT NULL,
-    rate  DOUBLE NOT NULL
+    date       DATE        NOT NULL,
+    rate       DOUBLE      NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT current_timestamp,
+    updated_at TIMESTAMPTZ DEFAULT current_timestamp
 )"""
 
 RAW_PIPELINE_RUNS = """\
@@ -155,19 +165,21 @@ CREATE TABLE IF NOT EXISTS staging.registry (
     fund_structure   VARCHAR,
     is_exclusive     VARCHAR,
     is_pension       VARCHAR,
-    reference_date   DATE    NOT NULL
+    reference_date   DATE        NOT NULL,
+    updated_at       TIMESTAMPTZ DEFAULT current_timestamp
 )"""
 
 STAGING_DAILY_QUOTES = """\
 CREATE TABLE IF NOT EXISTS staging.daily_quotes (
     fund_cnpj    VARCHAR NOT NULL,
     subclass_id  VARCHAR,
-    date         DATE    NOT NULL,
+    date         DATE        NOT NULL,
     nav          DOUBLE,
     aum          DOUBLE,
     inflows      DOUBLE,
     outflows     DOUBLE,
-    shareholders INTEGER
+    shareholders INTEGER,
+    updated_at   TIMESTAMPTZ DEFAULT current_timestamp
 )"""
 
 STAGING_FEES = """\
@@ -179,14 +191,15 @@ CREATE TABLE IF NOT EXISTS staging.fees (
     perf_fee_desc  VARCHAR,
     perf_fee_date  DATE,
     has_perf_fee   BOOLEAN,
-    reference_date DATE    NOT NULL
+    reference_date DATE        NOT NULL,
+    updated_at     TIMESTAMPTZ DEFAULT current_timestamp
 )"""
 
 STAGING_CDI_RATES = """\
 CREATE TABLE IF NOT EXISTS staging.cdi_rates (
-    date           DATE   NOT NULL,
-    rate           DOUBLE NOT NULL,
-    reference_date DATE   NOT NULL
+    date       DATE        NOT NULL,
+    rate       DOUBLE      NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT current_timestamp
 )"""
 
 STAGING_ANBIMA = """\
@@ -213,7 +226,8 @@ CREATE TABLE IF NOT EXISTS staging.anbima (
     min_initial_investment DOUBLE,
     open_nav_quota         VARCHAR,
     redemption_days        INTEGER,
-    reference_date         DATE    NOT NULL
+    reference_date         DATE        NOT NULL,
+    updated_at             TIMESTAMPTZ DEFAULT current_timestamp
 )"""
 
 MARTS_UNIVERSE = """\

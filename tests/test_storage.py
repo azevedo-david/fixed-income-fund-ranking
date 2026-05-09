@@ -94,8 +94,8 @@ def test_append_snapshot_keeps_both_versions(db):
             "rate": [0.0004],
         }
     )
-    db.append_snapshot("raw", "cdi_daily", df, downloaded_at=date(2024, 1, 1))
-    db.append_snapshot("raw", "cdi_daily", df, downloaded_at=date(2024, 1, 2))
+    db.append_snapshot("raw", "cdi_daily", df, reference_date=date(2024, 1, 1))
+    db.append_snapshot("raw", "cdi_daily", df, reference_date=date(2024, 1, 2))
 
     count = db.execute("SELECT COUNT(*) FROM raw.cdi_daily").fetchone()[0]
     assert count == 2
