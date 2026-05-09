@@ -97,8 +97,22 @@ class DuckDBWarehouse:
         """Delete all rows for reference_date then insert df; fully idempotent."""
         if df.empty:
             return 0
+
         self._ensure_table(schema, table, df)
         cols = self._col_list(schema, table, df)
+
+        null_cols = df.isnull().sum()
+        if (null_cols > 0).any():
+            null_report = ", ".join(
+                f"{col}={n}" for col, n in null_cols[null_cols > 0].items()
+            )
+            logger.debug(
+                "upsert_derived %s.%s: NULL values in DataFrame: %s",
+                schema,
+                table,
+                null_report,
+            )
+
         self._con.register("_derived_src", df)
         try:
             with self._transaction():
@@ -109,6 +123,16 @@ class DuckDBWarehouse:
                 self._con.execute(
                     f"INSERT INTO {schema}.{table} ({cols}) SELECT {cols} FROM _derived_src"
                 )
+        except Exception as e:
+            logger.error(
+                "upsert_derived failed for %s.%s: %s\nDataFrame shape: %s\nColumns: %s",
+                schema,
+                table,
+                str(e),
+                df.shape,
+                list(df.columns),
+            )
+            raise
         finally:
             self._con.unregister("_derived_src")
         logger.debug("upsert_derived %s.%s: %d rows", schema, table, len(df))
