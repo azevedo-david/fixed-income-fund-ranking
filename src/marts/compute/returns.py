@@ -42,15 +42,20 @@ def _trailing_one_window(quotas: pd.DataFrame, months: int) -> pd.Series:
     cutoffs = last_dates - pd.DateOffset(months=months)
 
     out = {}
-    for key, sub in quotas.groupby(level=GROUP_KEY, dropna=False):
+    for i, (key, sub) in enumerate(quotas.groupby(level=GROUP_KEY, dropna=False)):
         dates = sub.index.get_level_values("date")
-        cutoff = cutoffs.loc[key]
+        cutoff = cutoffs.iloc[i]
         before = dates[dates <= cutoff]
         if len(before) == 0:
             out[key] = np.nan
             continue
         v_end = sub["nav"].iloc[-1]
-        v_start = sub.loc[(key[0], key[1], before.max()), "nav"]
+        start_mask = sub.index.get_level_values("date") == before.max()
+        v_start_vals = sub.loc[start_mask, "nav"]
+        if v_start_vals.empty:
+            out[key] = np.nan
+            continue
+        v_start = v_start_vals.iloc[0]
         if pd.isna(v_end) or pd.isna(v_start) or v_start == 0:
             out[key] = np.nan
         else:
