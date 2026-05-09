@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import date
 
 import numpy as np
 import pandas as pd
@@ -23,40 +24,38 @@ _COLS = [
 ]
 
 
-def fetch_raw_daily_quotes(
-    db: DuckDBWarehouse, force: bool = False
-) -> pd.DataFrame | None:
-    """Return cleaned daily quotes for incremental upsert into staging.daily_quotes.
+def fetch_raw_daily_quotes_month(db: DuckDBWarehouse, ym: str) -> pd.DataFrame | None:
+    """Fetch and clean one YYYYMM month of inf_diario for staging.
 
-    Fetches from the start of the last staged month so CVM mid-month corrections
-    are picked up. ``force`` ignores the last staged date and fetches everything.
+    Seeds (last known NAV per fund before this month) are read from whatever
+    is already in staging.daily_quotes, so cross-month ffill is correct even
+    when months are processed sequentially from scratch.
     """
-    last_date = None if force else db.get_max_date("staging", "daily_quotes", "date")
+    year, month = int(ym[:4]), int(ym[4:])
+    from_date = date(year, month, 1)
+    to_date = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
 
-    if last_date is not None:
-        from_date = last_date.replace(day=1)
-        raw = db.execute(
-            "SELECT * FROM raw.inf_diario WHERE DT_COMPTC >= ?", [from_date]
-        ).df()
-        seeds = db.execute(
-            """
-            SELECT fund_cnpj, subclass_id, date, nav
-            FROM staging.daily_quotes
-            WHERE date < ?
-            QUALIFY ROW_NUMBER() OVER (
-                PARTITION BY fund_cnpj, subclass_id ORDER BY date DESC
-            ) = 1
-            """,
-            [from_date],
-        ).df()
-    else:
-        raw = db.execute("SELECT * FROM raw.inf_diario").df()
-        seeds = None
+    raw = db.execute(
+        "SELECT * FROM raw.inf_diario WHERE DT_COMPTC >= ? AND DT_COMPTC < ?",
+        [from_date, to_date],
+    ).df()
 
     if raw.empty:
         return None
 
-    return _clean(raw, seeds if seeds is not None and not seeds.empty else None)
+    seeds = db.execute(
+        """
+        SELECT fund_cnpj, subclass_id, date, nav
+        FROM staging.daily_quotes
+        WHERE date < ?
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY fund_cnpj, subclass_id ORDER BY date DESC
+        ) = 1
+        """,
+        [from_date],
+    ).df()
+
+    return _clean(raw, seeds if not seeds.empty else None)
 
 
 def _clean(df: pd.DataFrame, seeds: pd.DataFrame | None = None) -> pd.DataFrame:

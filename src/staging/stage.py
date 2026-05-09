@@ -58,17 +58,47 @@ def stage_fees(db: DuckDBWarehouse, force: bool = False) -> int:
 
 
 def stage_daily_quotes(db: DuckDBWarehouse, force: bool = False) -> int:
-    from .daily_quotes import fetch_raw_daily_quotes
+    """Process raw.inf_diario into staging.daily_quotes one month at a time.
+
+    Processing month-by-month keeps each batch small enough to fit in memory
+    regardless of how much history is in raw. The last staged month is always
+    re-processed so mid-month CVM corrections are picked up.
+    """
+    from datetime import date
+
+    from tqdm import tqdm
+
+    from ..ingestion._utils import yyyymm_range
+    from .daily_quotes import fetch_raw_daily_quotes_month
 
     if force:
         db.execute("DELETE FROM staging.daily_quotes")
-    df = fetch_raw_daily_quotes(db, force=force)
-    if df is None or df.empty:
-        logger.info("stage_daily_quotes: no new data")
-        return 0
-    rows = db.upsert_timeseries("staging", "daily_quotes", df, _DAILY_QUOTES_KEY)
-    logger.info("stage_daily_quotes: %d rows written", rows)
-    return rows
+
+    last_date = db.get_max_date("staging", "daily_quotes", "date")
+    if last_date is not None:
+        from_date = last_date.replace(day=1)
+    else:
+        min_raw = db.execute("SELECT MIN(DT_COMPTC) FROM raw.inf_diario").fetchone()[0]
+        if min_raw is None:
+            logger.info("stage_daily_quotes: raw.inf_diario is empty")
+            return 0
+        from_date = min_raw
+
+    months = yyyymm_range(from_date, date.today())
+    total = 0
+    for ym in tqdm(months, desc="daily_quotes", unit="month"):
+        df = fetch_raw_daily_quotes_month(db, ym)
+        if df is not None and not df.empty:
+            rows = db.upsert_timeseries(
+                "staging", "daily_quotes", df, _DAILY_QUOTES_KEY
+            )
+            total += rows
+            logger.info("stage_daily_quotes: %s → %d rows", ym, rows)
+
+    logger.info(
+        "stage_daily_quotes: total %d rows across %d months", total, len(months)
+    )
+    return total
 
 
 def stage_cdi_rates(db: DuckDBWarehouse, force: bool = False) -> int:
