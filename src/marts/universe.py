@@ -51,6 +51,10 @@ def build_universe(
     fees = _load_snapshot(db, "staging.fees", reference_date)
     anbima = _load_snapshot(db, "staging.anbima", reference_date)
 
+    if registry.empty:
+        logger.warning("universe: empty registry snapshot for %s", reference_date)
+        return pd.DataFrame(columns=_UNIVERSE_COLS)
+
     eligible = registry[
         (registry["status"] == "Em Funcionamento Normal")
         & (registry["anbima_category"].str.startswith("Renda Fixa", na=False))
@@ -62,6 +66,7 @@ def build_universe(
             <= pd.Timestamp(reference_date)
         )
     ].copy()
+    logger.debug("universe: %d funds pass filter criteria", len(eligible))
 
     fee_cols = fees[["fund_cnpj", "adm_fee", "has_perf_fee"]].drop_duplicates(
         "fund_cnpj", keep="last"
@@ -83,12 +88,16 @@ def build_universe(
         """,
         [window_start, reference_date],
     ).df()
+    logger.debug("universe: %d fund-subclass combos from daily_quotes", len(agg))
 
     eligible = eligible.merge(agg, on=["fund_cnpj", "subclass_id"], how="inner")
+    logger.debug("universe: %d combos after aum merge", len(eligible))
+
     eligible = eligible[
         (eligible["median_holders"].fillna(0) > settings.universe.min_cotistas)
         & (eligible["median_aum"].fillna(0) > settings.universe.min_aum)
     ].reset_index(drop=True)
+    logger.debug("universe: %d combos pass aum/holders threshold", len(eligible))
 
     anbima_keep = anbima[
         [
@@ -100,6 +109,11 @@ def build_universe(
         ]
     ].rename(columns={"min_initial_investment": "min_investment"})
     eligible = eligible.merge(anbima_keep, on=["fund_cnpj", "subclass_id"], how="left")
+
+    null_cnpj = eligible["fund_cnpj"].isna().sum()
+    if null_cnpj > 0:
+        logger.error("universe: %d rows with NULL fund_cnpj!", null_cnpj)
+        eligible = eligible[eligible["fund_cnpj"].notna()].reset_index(drop=True)
 
     eligible["reference_date"] = reference_date
     logger.info("universe: %d eligible funds for %s", len(eligible), reference_date)

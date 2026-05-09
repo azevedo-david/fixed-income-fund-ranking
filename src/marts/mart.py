@@ -30,6 +30,17 @@ def mart_universe(
             return existing
 
     df = build_universe(db, reference_date, settings)
+    if df.empty:
+        logger.warning("mart_universe: no eligible funds for %s", reference_date)
+        return 0
+
+    null_cols = df.isnull().sum()
+    if (null_cols > 0).any():
+        null_report = ", ".join(
+            f"{col}={n}" for col, n in null_cols[null_cols > 0].items()
+        )
+        logger.warning("mart_universe: NULL values detected: %s", null_report)
+
     rows = db.upsert_derived("marts", "universe", df, reference_date=reference_date)
     logger.info("mart_universe: %d rows for %s", rows, reference_date)
     return rows
