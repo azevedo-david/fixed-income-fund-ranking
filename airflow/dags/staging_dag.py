@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from airflow.decorators import dag, task
 from airflow.models import Variable
 from airflow.models.param import Param
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 
 
 def _db_path() -> str:
@@ -86,7 +87,14 @@ def fund_ranking_stage() -> None:
         with DuckDBWarehouse(_db_path()) as db:
             stage_anbima(db, force=force)
 
-    (registry() >> fees() >> daily_quotes() >> cdi_rates() >> anbima())
+    trigger_marts = TriggerDagRunOperator(
+        task_id="trigger_marts",
+        trigger_dag_id="fund_ranking_marts",
+        wait_for_completion=False,
+        reset_dag_run=True,
+    )
+
+    (registry() >> fees() >> daily_quotes() >> cdi_rates() >> anbima() >> trigger_marts)
 
 
 fund_ranking_stage()

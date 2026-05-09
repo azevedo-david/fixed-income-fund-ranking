@@ -51,8 +51,32 @@ def fetch_raw_anbima(db: DuckDBWarehouse) -> pd.DataFrame | None:
     return df
 
 
+def _normalise_subclass_id(value) -> str | None:
+    """Coerce Excel float codes (123.0 → '123') and strip whitespace."""
+    if pd.isna(value):
+        return None
+    if isinstance(value, float):
+        return str(int(value))
+    return str(value).strip() or None
+
+
 def _clean(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.rename(
+    out = df.copy()
+
+    # Subclasse rows with no CVM code would collide with their parent class
+    # (both mapping to subclass_id=None); non-subclasse rows must be None.
+    if "Código CVM Subclasse" in out.columns:
+        unmappable = (out["Estrutura"] == "Subclasse") & out[
+            "Código CVM Subclasse"
+        ].isna()
+        out = out[~unmappable].copy()
+        out["Código CVM Subclasse"] = out["Código CVM Subclasse"].where(
+            out["Estrutura"] == "Subclasse"
+        )
+    else:
+        out["Código CVM Subclasse"] = None
+
+    out = out.rename(
         columns={
             "CNPJ da Classe": "fund_cnpj",
             "Código ANBIMA": "anbima_code",
@@ -79,4 +103,9 @@ def _clean(df: pd.DataFrame) -> pd.DataFrame:
         }
     )
     out["fund_cnpj"] = out["fund_cnpj"].map(fmt_cnpj)
-    return out[_COLS]
+    out["subclass_id"] = out["subclass_id"].map(_normalise_subclass_id)
+    out["redemption_days"] = pd.to_numeric(out["redemption_days"], errors="coerce")
+    out["min_initial_investment"] = pd.to_numeric(
+        out["min_initial_investment"], errors="coerce"
+    )
+    return out[_COLS].drop_duplicates(subset=["fund_cnpj", "subclass_id"], keep="first")
