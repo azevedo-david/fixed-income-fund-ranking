@@ -6,7 +6,7 @@ import logging
 
 import pandas as pd
 
-from ..compute.ranking import rank_all
+from .compute.ranking import rank_all
 from ..config import Settings
 
 logger = logging.getLogger(__name__)

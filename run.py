@@ -9,11 +9,6 @@ from datetime import date
 from pathlib import Path
 
 from src.config import LOGS_DIR, Settings
-from src.compute.metrics import build_metrics
-from src.compute.publish import build_payload, local_json_sink, publish
-from src.compute.ranking import rank_all
-from src.compute.report import generate_report
-from src.compute.universe import build_universe
 
 logger = logging.getLogger(__name__)
 
@@ -65,36 +60,16 @@ def main() -> None:
         force,
     )
 
-    universe = build_universe(settings, force=force)
-    metrics_df = build_metrics(universe, settings, force=force)
+    from src.storage import DuckDBWarehouse
+    from src.marts.mart import mart_all
+    from src.publish.report import write_report
+    from src.publish.publish import write_json, write_parquet
 
-    metrics_path = settings.output.metrics_parquet
-    metrics_path.parent.mkdir(parents=True, exist_ok=True)
-    metrics_df.to_parquet(metrics_path, index=False)
-    logger.info(
-        "metrics_df saved to %s (%d rows, %d cols)",
-        metrics_path,
-        len(metrics_df),
-        metrics_df.shape[1],
-    )
-
-    rankings = rank_all(metrics_df, settings)
-    generate_report(rankings, len(metrics_df), settings)
-
-    payload = build_payload(rankings, len(metrics_df), settings)
-    publish(payload, sinks=[local_json_sink(settings.output.ranking_json)])
-
-    for seg in payload["segments"]:
-        label = f"{seg['purpose']} · {seg['profile']} · {seg['investor_type']}"
-        for fund in seg["funds"]:
-            logger.debug(
-                "  [%s] #%d %s (%s)  ret_ann=%.2f%%",
-                label,
-                fund["rank"],
-                fund["fund_name"],
-                fund["cnpj"],
-                (fund["return_annualized_net"] or 0) * 100,
-            )
+    with DuckDBWarehouse(str(settings.db_path)) as db:
+        mart_all(db, settings.reference_date, settings, force=force)
+        write_report(db, settings.reference_date, settings)
+        write_json(db, settings.reference_date, settings)
+        write_parquet(db, settings.reference_date, settings)
 
     logger.info(
         "--- pipeline complete  outputs → %s ---", settings.output.ranking_md.parent

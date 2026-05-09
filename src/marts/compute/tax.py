@@ -7,17 +7,17 @@ import pandas as pd
 
 
 def resolve_ir_rate(
-    tributacao: str | None,
-    nome: str | None,
-    rates_by_tributacao: dict[str, float],
-    isento_keywords: list[str],
+    target_taxation: str | None,
+    fund_name: str | None,
+    rates_by_taxation: dict[str, float],
+    exempt_keywords: list[str],
     default_rate: float,
 ) -> float:
     """Map target taxation + fund name to IR rate; direct lookup → exempt keyword → default."""
-    if tributacao in rates_by_tributacao:
-        return rates_by_tributacao[tributacao]
-    nome_up = str(nome or "").upper()
-    if any(kw in nome_up for kw in isento_keywords):
+    if target_taxation in rates_by_taxation:
+        return rates_by_taxation[target_taxation]
+    fund_name_up = str(fund_name or "").upper()
+    if any(kw in fund_name_up for kw in exempt_keywords):
         return 0.0
     return default_rate
 
