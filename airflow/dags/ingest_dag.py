@@ -19,10 +19,6 @@ def _db_path() -> str:
     return Variable.get("duckdb_path")
 
 
-def _reference_date(logical_date: datetime) -> "date":
-    return logical_date.date()
-
-
 _DEFAULT_ARGS = {
     "retries": 2,
     "retry_delay": timedelta(seconds=30),
@@ -52,13 +48,14 @@ def fund_ranking_ingest() -> None:
 
     @task()
     def inf_diario(**context) -> None:
+        from src.config import Settings
         from src.ingestion.ingest import ingest_inf_diario
         from src.storage import DuckDBWarehouse
 
         force = context["params"]["force"]
-        ref = _reference_date(context["logical_date"])
+        history_start = Settings.from_yaml().history_start
         with DuckDBWarehouse(_db_path()) as db:
-            ingest_inf_diario(db, reference_date=ref, force=force)
+            ingest_inf_diario(db, force=force, history_start=history_start)
 
     @task()
     def cad_fi_hist(**context) -> None:
@@ -75,19 +72,19 @@ def fund_ranking_ingest() -> None:
         from src.storage import DuckDBWarehouse
 
         force = context["params"]["force"]
-        ref = _reference_date(context["logical_date"])
         with DuckDBWarehouse(_db_path()) as db:
-            ingest_extrato(db, reference_date=ref, force=force)
+            ingest_extrato(db, force=force)
 
     @task()
     def cdi(**context) -> None:
+        from src.config import Settings
         from src.ingestion.ingest import ingest_cdi
         from src.storage import DuckDBWarehouse
 
         force = context["params"]["force"]
-        ref = _reference_date(context["logical_date"])
+        history_start = Settings.from_yaml().history_start
         with DuckDBWarehouse(_db_path()) as db:
-            ingest_cdi(db, reference_date=ref, force=force)
+            ingest_cdi(db, force=force, history_start=history_start)
 
     @task()
     def anbima(**context) -> None:

@@ -22,16 +22,20 @@ from .cvm import (
 
 logger = logging.getLogger(__name__)
 
-_HISTORY_START = date(2021, 1, 1)
+_DEFAULT_HISTORY_START = date(2021, 1, 1)
 
 
-def ingest_raw(db: DuckDBWarehouse, force: bool = False) -> None:
+def ingest_raw(
+    db: DuckDBWarehouse,
+    force: bool = False,
+    history_start: date = _DEFAULT_HISTORY_START,
+) -> None:
     """Run all sources in dependency order then clean up raw files."""
     ingest_registro(db, force)
-    ingest_inf_diario(db, force)
+    ingest_inf_diario(db, force, history_start)
     ingest_cad_fi_hist(db, force)
     ingest_extrato(db, force)
-    ingest_cdi(db, force)
+    ingest_cdi(db, force, history_start)
     ingest_anbima(db, force)
     ingest_cleanup()
 
@@ -48,6 +52,43 @@ def _snapshot_loaded_today(db: DuckDBWarehouse, schema: str, table: str) -> bool
     return bool(row and row[0] == date.today())
 
 
+def ingest_inf_diario(
+    db: DuckDBWarehouse,
+    force: bool = False,
+    history_start: date = _DEFAULT_HISTORY_START,
+) -> None:
+    """Incrementally upsert monthly CVM daily-quote files into raw.inf_diario."""
+    today = date.today()
+    max_dt = db.get_max_date("raw", "inf_diario", "DT_COMPTC")
+    start = history_start if force else (max_dt if max_dt else history_start)
+    months = yyyymm_range(start, today)
+    for ym in tqdm(months, desc="inf_diario", unit="month"):
+        df = fetch_inf_diario_month(ym, force=force)
+        if not df.empty:
+            db.upsert_timeseries(
+                "raw",
+                "inf_diario",
+                df,
+                natural_key=["CNPJ_FUNDO_CLASSE", "ID_SUBCLASSE", "DT_COMPTC"],
+            )
+    logger.info("ingest inf_diario: %d months", len(months))
+
+
+def ingest_cdi(
+    db: DuckDBWarehouse,
+    force: bool = False,
+    history_start: date = _DEFAULT_HISTORY_START,
+) -> None:
+    """Incrementally upsert BCB daily CDI rates into raw.cdi_daily."""
+    today = date.today()
+    max_dt = db.get_max_date("raw", "cdi_daily", "date")
+    start = history_start if force else (max_dt if max_dt else history_start)
+    df = fetch_cdi_daily(start=start, end=today)
+    if not df.empty:
+        db.upsert_timeseries("raw", "cdi_daily", df, natural_key=["date"])
+    logger.info("ingest cdi_daily: %d rows", len(df))
+
+
 def ingest_registro(db: DuckDBWarehouse, force: bool = False) -> None:
     """Fetch CVM fund/class registry and append today's snapshot to raw.registro_*."""
     today = date.today()
@@ -61,24 +102,6 @@ def ingest_registro(db: DuckDBWarehouse, force: bool = False) -> None:
                 "raw", table_key, tables[table_key], reference_date=today
             )
     logger.info("ingest registro: done")
-
-
-def ingest_inf_diario(db: DuckDBWarehouse, force: bool = False) -> None:
-    """Incrementally upsert monthly CVM daily-quote files into raw.inf_diario."""
-    today = date.today()
-    max_dt = db.get_max_date("raw", "inf_diario", "DT_COMPTC")
-    start = max_dt if max_dt else _HISTORY_START
-    months = yyyymm_range(start, today)
-    for ym in tqdm(months, desc="inf_diario", unit="month"):
-        df = fetch_inf_diario_month(ym, force=force)
-        if not df.empty:
-            db.upsert_timeseries(
-                "raw",
-                "inf_diario",
-                df,
-                natural_key=["CNPJ_FUNDO_CLASSE", "ID_SUBCLASSE", "DT_COMPTC"],
-            )
-    logger.info("ingest inf_diario: %d months", len(months))
 
 
 def ingest_cad_fi_hist(db: DuckDBWarehouse, force: bool = False) -> None:
@@ -104,17 +127,6 @@ def ingest_extrato(db: DuckDBWarehouse, force: bool = False) -> None:
     df = df[["CNPJ_FUNDO_CLASSE", "DT_COMPTC", "TAXA_ADM", "EXISTE_TAXA_PERFM"]]
     db.append_snapshot("raw", "extrato_fi", df, reference_date=today)
     logger.info("ingest extrato: done")
-
-
-def ingest_cdi(db: DuckDBWarehouse, force: bool = False) -> None:
-    """Incrementally upsert BCB daily CDI rates into raw.cdi_daily."""
-    today = date.today()
-    max_dt = db.get_max_date("raw", "cdi_daily", "date")
-    start = _HISTORY_START if force else (max_dt if max_dt else _HISTORY_START)
-    df = fetch_cdi_daily(start=start, end=today)
-    if not df.empty:
-        db.upsert_timeseries("raw", "cdi_daily", df, natural_key=["date"])
-    logger.info("ingest cdi_daily: %d rows", len(df))
 
 
 def ingest_anbima(db: DuckDBWarehouse, force: bool = False) -> None:

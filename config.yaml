@@ -9,6 +9,7 @@
 # When force_download=true every loader bypasses local caches and re-downloads
 # the source file from the network. Default is false: the pipeline reuses
 # cached raw files and processed parquets whenever possible.
+history_start: "2021-01-01"
 force_download: false
 
 # -----------------------------------------------------------------------------

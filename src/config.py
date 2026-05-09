@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -82,6 +81,7 @@ class OutputConfig:
 
 @dataclass(frozen=True)
 class Settings:
+    history_start: date
     reference_date: date
     force_download: bool
     universe: UniverseConfig
@@ -157,6 +157,7 @@ class Settings:
         )
 
         return cls(
+            history_start=_parse_date(cfg.get("history_start", "2021-01-01")),
             reference_date=reference_date,
             force_download=bool(cfg.get("force_download", False)),
             universe=UniverseConfig(**cfg["universe"]),
