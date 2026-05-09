@@ -22,7 +22,7 @@ from .compute.returns import (
     trailing_returns,
 )
 from .compute.risk import max_drawdown, volatility_and_sharpe
-from .compute.tax import apply_ir, net_series, resolve_ir_rate
+from .compute.tax import apply_ir, net_series
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +58,8 @@ def map_investor_level(publico_alvo: pd.Series) -> pd.Series:
 
 def _cdi_annualised(cdi_daily: pd.Series, reference_date: pd.Timestamp) -> float:
     s = cdi_daily[cdi_daily.index <= reference_date]
+    if s.empty:
+        return 0.0
     span = (reference_date - s.index.min()).days
     if span <= 0:
         return 0.0
@@ -110,16 +112,19 @@ def _apply_tax_layer(
     exempt_kws = settings.tax.exempt_keywords
     default_rate = settings.tax.default_rate
 
-    def get_ir_rate(row: pd.Series) -> float:
-        return resolve_ir_rate(
-            row.get("target_taxation"),
-            row.get("fund_name"),
-            rates_dict,
-            exempt_kws,
-            default_rate,
+    ir_rate = df["target_taxation"].map(rates_dict)
+    unresolved = ir_rate.isna()
+    if unresolved.any() and exempt_kws:
+        pattern = "|".join(exempt_kws)
+        is_exempt = (
+            df.loc[unresolved, "fund_name"]
+            .fillna("")
+            .str.upper()
+            .str.contains(pattern, regex=True)
         )
-
-    df["ir_rate"] = df.apply(get_ir_rate, axis=1)
+        ir_rate.loc[unresolved] = np.where(is_exempt, 0.0, default_rate)
+    ir_rate = ir_rate.fillna(default_rate)
+    df["ir_rate"] = ir_rate
 
     cdi_ir = settings.tax.cdi_ir_rate
     labels = list(settings.windows.keys()) + ["annualized"]
@@ -166,20 +171,28 @@ def build_metrics(
     finally:
         db._con.unregister("_metrics_universe")
 
+    if quotes_df.empty:
+        logger.warning("metrics: no quotes found for universe on %s", reference_date)
+        return pd.DataFrame(columns=["fund_cnpj", "subclass_id", "reference_date"])
+
     cdi_df = db.execute(
         "SELECT date, rate FROM staging.cdi_rates WHERE date >= ? AND date <= ? ORDER BY date",
         [cdi_start, reference_date],
     ).df()
+    if cdi_df.empty:
+        logger.warning("metrics: no CDI data found for %s", reference_date)
+        return pd.DataFrame(columns=["fund_cnpj", "subclass_id", "reference_date"])
+
     cdi = pd.Series(
         cdi_df["rate"].values,
-        index=pd.to_datetime(cdi_df["date"]),
+        index=pd.to_datetime(cdi_df["date"]).rename("date"),
         name="cdi_daily",
     )
 
     daily = daily_returns(quotes_df)
 
     db._con.register("_daily", daily)
-    db._con.register("_cdi_ts", cdi.reset_index().rename(columns={"index": "date"}))
+    db._con.register("_cdi_ts", cdi.reset_index())
     try:
         aligned = db.execute("""
             WITH fund_date_range AS (
