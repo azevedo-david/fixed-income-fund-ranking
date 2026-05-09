@@ -206,16 +206,16 @@ def build_metrics(
             ),
             ffilled AS (
                 SELECT fund_cnpj, subclass_id, date, cdi_daily,
-                       FIRST_VALUE(return_daily) OVER (
+                       LAST_VALUE(return_daily IGNORE NULLS) OVER (
                            PARTITION BY fund_cnpj, subclass_id
                            ORDER BY date
                            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-                       ) FILTER (WHERE return_daily IS NOT NULL) AS return_daily,
-                       FIRST_VALUE(nav) OVER (
+                       ) AS return_daily,
+                       LAST_VALUE(nav IGNORE NULLS) OVER (
                            PARTITION BY fund_cnpj, subclass_id
                            ORDER BY date
                            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-                       ) FILTER (WHERE nav IS NOT NULL) AS nav
+                       ) AS nav
                 FROM with_quotes
             )
             SELECT fund_cnpj, subclass_id, date, return_daily, nav, cdi_daily
