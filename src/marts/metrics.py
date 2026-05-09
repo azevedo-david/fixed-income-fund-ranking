@@ -190,8 +190,7 @@ def build_metrics(
                 GROUP BY fund_cnpj, subclass_id
             ),
             cdi_per_fund AS (
-                SELECT f.fund_cnpj, f.subclass_id, c.date, c.cdi_daily,
-                       ROW_NUMBER() OVER (PARTITION BY f.fund_cnpj, f.subclass_id ORDER BY c.date) AS rn
+                SELECT f.fund_cnpj, f.subclass_id, c.date, c.cdi_daily
                 FROM fund_date_range f
                 CROSS JOIN _cdi_ts c
                 WHERE c.date >= f.first_date AND c.date <= f.last_date
