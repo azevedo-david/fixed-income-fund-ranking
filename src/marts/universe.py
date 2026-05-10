@@ -47,13 +47,38 @@ def _temp_table(
 
 
 def _load_snapshot(db: DuckDBWarehouse, table: str, calc_date: date) -> pd.DataFrame:
-    """Load the most recent snapshot from a staging table at or before calc_date."""
+    """Load the most recent snapshot at or before calc_date; falls back to earliest after.
+
+    The fallback enables backfill runs where the registry was downloaded after the
+    reference date — inception_date filtering in build_universe handles as-of correctness.
+    """
+    row = db.execute(
+        f"SELECT COALESCE("
+        f"  (SELECT MAX(reference_date) FROM {table} WHERE reference_date <= ?),"
+        f"  (SELECT MIN(reference_date) FROM {table} WHERE reference_date >= ?)"
+        f") AS snap_date",
+        [calc_date, calc_date],
+    ).fetchone()
+    snap_date = row[0] if row else None
+
+    if snap_date is None:
+        logger.warning("%s: no snapshot available for %s", table, calc_date)
+        return pd.DataFrame()
+
+    if snap_date > calc_date:
+        logger.warning(
+            "%s: no snapshot at or before %s — using nearest future snapshot (%s)",
+            table,
+            calc_date,
+            snap_date,
+        )
+    else:
+        logger.debug(
+            "%s: using snapshot %s for reference_date %s", table, snap_date, calc_date
+        )
+
     return db.execute(
-        f"SELECT * FROM {table} "
-        f"WHERE reference_date = ("
-        f"  SELECT MAX(reference_date) FROM {table} WHERE reference_date <= ?"
-        f")",
-        [calc_date],
+        f"SELECT * FROM {table} WHERE reference_date = ?", [snap_date]
     ).df()
 
 
