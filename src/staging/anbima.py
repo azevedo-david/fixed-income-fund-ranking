@@ -7,30 +7,30 @@ import pandas as pd
 from ._utils import fmt_cnpj
 from ..storage import DuckDBWarehouse
 
-_COLS = [
-    "fund_cnpj",
-    "subclass_id",
-    "anbima_code",
-    "structure",
-    "commercial_name",
-    "category",
-    "type",
-    "level_1",
-    "level_2",
-    "level_3",
-    "focus",
-    "composition",
-    "open_to_public",
-    "is_esg",
-    "target_taxation",
-    "administrator",
-    "lead_manager",
-    "investor_type",
-    "investor_profile",
-    "min_initial_investment",
-    "open_nav_quota",
-    "redemption_days",
-]
+_RENAME = {
+    "Cnpj_Da_Classe": "fund_cnpj",
+    "Codigo_Cvm_Subclasse": "subclass_id",
+    "Codigo_Anbima": "anbima_code",
+    "Estrutura": "structure",
+    "Nome_Comercial": "commercial_name",
+    "Categoria_Anbima": "category",
+    "Tipo_Anbima": "type",
+    "Nivel_1_Categoria": "level_1",
+    "Nivel_2_Categoria": "level_2",
+    "Nivel_3_Subcategoria": "level_3",
+    "Foco_Atuacao": "focus",
+    "Composicao_Do_Fundo": "composition",
+    "Aberto_Estatutariamente": "open_to_public",
+    "Fundo_Esg": "is_esg",
+    "Tributacao_Alvo": "target_taxation",
+    "Administrador": "administrator",
+    "Gestor_Principal": "lead_manager",
+    "Tipo_De_Investidor": "investor_type",
+    "Caracteristica_Do_Investidor": "investor_profile",
+    "Aplicacao_Inicial_Minima": "min_initial_investment",
+    "Cota_De_Abertura": "open_nav_quota",
+    "Prazo_Pagamento_Resgate_Em_Dias": "redemption_days",
+}
 
 
 def fetch_raw_anbima(db: DuckDBWarehouse) -> pd.DataFrame | None:
@@ -65,47 +65,24 @@ def _clean(df: pd.DataFrame) -> pd.DataFrame:
 
     # Subclasse rows with no CVM code would collide with their parent class
     # (both mapping to subclass_id=None); non-subclasse rows must be None.
-    if "Código CVM Subclasse" in out.columns:
+    if "Codigo_Cvm_Subclasse" in out.columns:
         unmappable = (out["Estrutura"] == "Subclasse") & out[
-            "Código CVM Subclasse"
+            "Codigo_Cvm_Subclasse"
         ].isna()
         out = out[~unmappable].copy()
-        out["Código CVM Subclasse"] = out["Código CVM Subclasse"].where(
+        out["Codigo_Cvm_Subclasse"] = out["Codigo_Cvm_Subclasse"].where(
             out["Estrutura"] == "Subclasse"
         )
     else:
-        out["Código CVM Subclasse"] = None
+        out["Codigo_Cvm_Subclasse"] = None
 
-    out = out.rename(
-        columns={
-            "CNPJ da Classe": "fund_cnpj",
-            "Código ANBIMA": "anbima_code",
-            "Estrutura": "structure",
-            "Nome Comercial": "commercial_name",
-            "Categoria ANBIMA": "category",
-            "Tipo ANBIMA": "type",
-            "Nível 1 Categoria": "level_1",
-            "Nível 2 Categoria": "level_2",
-            "Nível 3 Subcategoria": "level_3",
-            "Foco Atuação": "focus",
-            "Composição do Fundo": "composition",
-            "Aberto Estatutariamente": "open_to_public",
-            "Fundo ESG": "is_esg",
-            "Tributação Alvo": "target_taxation",
-            "Administrador": "administrator",
-            "Gestor Principal": "lead_manager",
-            "Tipo de Investidor": "investor_type",
-            "Característica do Investidor": "investor_profile",
-            "Aplicação Inicial Mínima": "min_initial_investment",
-            "Cota de Abertura": "open_nav_quota",
-            "Prazo Pagamento Resgate em dias": "redemption_days",
-            "Código CVM Subclasse": "subclass_id",
-        }
-    )
+    out = out.rename(columns=_RENAME)
     out["fund_cnpj"] = out["fund_cnpj"].map(fmt_cnpj)
     out["subclass_id"] = out["subclass_id"].map(_normalise_subclass_id)
     out["redemption_days"] = pd.to_numeric(out["redemption_days"], errors="coerce")
     out["min_initial_investment"] = pd.to_numeric(
         out["min_initial_investment"], errors="coerce"
     )
-    return out[_COLS].drop_duplicates(subset=["fund_cnpj", "subclass_id"], keep="first")
+    return out[list(_RENAME.values())].drop_duplicates(
+        subset=["fund_cnpj", "subclass_id"], keep="first"
+    )

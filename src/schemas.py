@@ -103,33 +103,32 @@ CREATE TABLE IF NOT EXISTS raw.extrato_fi (
     created_at          TIMESTAMPTZ DEFAULT current_timestamp
 )"""
 
-# ANBIMA xlsx has Portuguese column names with accents — stored as-is from the source file.
 RAW_ANBIMA_CARACTERISTICAS = """\
 CREATE TABLE IF NOT EXISTS raw.anbima_caracteristicas (
-    "CNPJ da Classe"                  VARCHAR NOT NULL,
-    "Código ANBIMA"                   VARCHAR,
-    "Estrutura"                       VARCHAR,
-    "Nome Comercial"                  VARCHAR,
-    "Categoria ANBIMA"                VARCHAR,
-    "Tipo ANBIMA"                     VARCHAR,
-    "Nível 1 Categoria"               VARCHAR,
-    "Nível 2 Categoria"               VARCHAR,
-    "Nível 3 Subcategoria"            VARCHAR,
-    "Foco Atuação"                    VARCHAR,
-    "Composição do Fundo"             VARCHAR,
-    "Aberto Estatutariamente"         VARCHAR,
-    "Fundo ESG"                       VARCHAR,
-    "Tributação Alvo"                 VARCHAR,
-    "Administrador"                   VARCHAR,
-    "Gestor Principal"                VARCHAR,
-    "Tipo de Investidor"              VARCHAR,
-    "Característica do Investidor"    VARCHAR,
-    "Aplicação Inicial Mínima"        DOUBLE,
-    "Cota de Abertura"                VARCHAR,
-    "Prazo Pagamento Resgate em dias" INTEGER,
-    "Código CVM Subclasse"            VARCHAR,
-    reference_date                    DATE        NOT NULL,
-    created_at                        TIMESTAMPTZ DEFAULT current_timestamp
+    Cnpj_Da_Classe                   VARCHAR NOT NULL,
+    Codigo_Anbima                    VARCHAR,
+    Estrutura                        VARCHAR,
+    Nome_Comercial                   VARCHAR,
+    Categoria_Anbima                 VARCHAR,
+    Tipo_Anbima                      VARCHAR,
+    Nivel_1_Categoria                VARCHAR,
+    Nivel_2_Categoria                VARCHAR,
+    Nivel_3_Subcategoria             VARCHAR,
+    Foco_Atuacao                     VARCHAR,
+    Composicao_Do_Fundo              VARCHAR,
+    Aberto_Estatutariamente          VARCHAR,
+    Fundo_Esg                        VARCHAR,
+    Tributacao_Alvo                  VARCHAR,
+    Administrador                    VARCHAR,
+    Gestor_Principal                 VARCHAR,
+    Tipo_De_Investidor               VARCHAR,
+    Caracteristica_Do_Investidor     VARCHAR,
+    Aplicacao_Inicial_Minima         DOUBLE,
+    Cota_De_Abertura                 VARCHAR,
+    Prazo_Pagamento_Resgate_Em_Dias  INTEGER,
+    Codigo_Cvm_Subclasse             VARCHAR,
+    reference_date                   DATE        NOT NULL,
+    created_at                       TIMESTAMPTZ DEFAULT current_timestamp
 )"""
 
 RAW_CDI_DAILY = """\

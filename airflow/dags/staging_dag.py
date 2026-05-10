@@ -84,6 +84,16 @@ def fund_ranking_stage() -> None:
         with DuckDBWarehouse(_db_path()) as db:
             stage_anbima(db, force=force)
 
+    @task()
+    def validate_staging() -> None:
+        from datetime import date
+
+        from src.storage import DuckDBWarehouse
+        from src.validation import validate_staging as _validate_staging
+
+        with DuckDBWarehouse(_db_path()) as db:
+            _validate_staging(db, date.today())
+
     trigger_marts = TriggerDagRunOperator(
         task_id="trigger_marts",
         trigger_dag_id="fund_ranking_marts",
@@ -91,7 +101,15 @@ def fund_ranking_stage() -> None:
         reset_dag_run=True,
     )
 
-    (registry() >> fees() >> daily_quotes() >> cdi_rates() >> anbima() >> trigger_marts)
+    (
+        registry()
+        >> fees()
+        >> daily_quotes()
+        >> cdi_rates()
+        >> anbima()
+        >> validate_staging()
+        >> trigger_marts
+    )
 
 
 fund_ranking_stage()

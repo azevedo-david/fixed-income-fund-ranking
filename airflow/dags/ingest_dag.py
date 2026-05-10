@@ -107,6 +107,16 @@ def fund_ranking_ingest() -> None:
 
         ingest_cleanup()
 
+    @task()
+    def validate_raw() -> None:
+        from datetime import date
+
+        from src.storage import DuckDBWarehouse
+        from src.validation import validate_ingestion
+
+        with DuckDBWarehouse(_db_path()) as db:
+            validate_ingestion(db, date.today())
+
     trigger_staging = TriggerDagRunOperator(
         task_id="trigger_staging",
         trigger_dag_id="fund_ranking_stage",
@@ -122,6 +132,7 @@ def fund_ranking_ingest() -> None:
         >> cdi()
         >> anbima()
         >> cleanup()
+        >> validate_raw()
         >> trigger_staging
     )
 

@@ -34,7 +34,7 @@ def _clean_classe(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     out["Data_Inicio"] = pd.to_datetime(out["Data_Inicio"], errors="coerce")
     out["CNPJ_Classe"] = out["CNPJ_Classe"].map(fmt_cnpj)
-    return out.rename(
+    out = out.rename(
         columns={
             "CNPJ_Classe": "fund_cnpj",
             "Denominacao_Social": "fund_name",
@@ -60,6 +60,11 @@ def _clean_classe(df: pd.DataFrame) -> pd.DataFrame:
             "is_exclusive",
         ]
     ]
+    return (
+        out.sort_values("inception_date", na_position="first")
+        .drop_duplicates(subset="fund_cnpj", keep="last")
+        .reset_index(drop=True)
+    )
 
 
 def _clean_subclasse(df: pd.DataFrame) -> pd.DataFrame:
