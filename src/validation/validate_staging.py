@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 from ._base import (
     ValidateResult,
@@ -20,17 +20,25 @@ _TASK = "validate_staging"
 _DATASET = "staging"
 
 
-def validate_staging(db: DuckDBWarehouse, reference_date: date) -> list[ValidateResult]:
+def validate_staging(
+    db: DuckDBWarehouse, reference_date: date, aum_lookback_days: int = 30
+) -> list[ValidateResult]:
     """Run all staging-layer checks, write to log, and raise on error-level failures."""
     return check_and_gate(
-        db, _build_checks(db, reference_date), _TASK, _DATASET, reference_date
+        db,
+        _build_checks(db, reference_date, aum_lookback_days),
+        _TASK,
+        _DATASET,
+        reference_date,
     )
 
 
-def _build_checks(db: DuckDBWarehouse, reference_date: date) -> list[ValidateResult]:
+def _build_checks(
+    db: DuckDBWarehouse, reference_date: date, aum_lookback_days: int = 30
+) -> list[ValidateResult]:
     return [
         *_checks_registry(db, reference_date),
-        *_checks_daily_quotes(db, reference_date),
+        *_checks_daily_quotes(db, reference_date, aum_lookback_days),
         *_checks_fees(db, reference_date),
         *_checks_cdi_rates(db, reference_date),
         *_checks_anbima(db, reference_date),
@@ -85,7 +93,7 @@ def _checks_registry(db: DuckDBWarehouse, reference_date: date) -> list[Validate
 
 
 def _checks_daily_quotes(
-    db: DuckDBWarehouse, reference_date: date
+    db: DuckDBWarehouse, reference_date: date, aum_lookback_days: int = 30
 ) -> list[ValidateResult]:
     return [
         check_row_count(db, "staging.daily_quotes", name="daily_quotes_row_count"),
@@ -102,7 +110,19 @@ def _checks_daily_quotes(
             "fund_cnpj",
             name="daily_quotes_fund_cnpj_not_null",
         ),
+        check_pk_unique(
+            db,
+            "staging.daily_quotes",
+            ["fund_cnpj", "subclass_id", "date"],
+            name="daily_quotes_pk_unique",
+        ),
+        _daily_quotes_window_coverage(db, reference_date, aum_lookback_days),
         _daily_quotes_nav_null_rate(db),
+        _daily_quotes_aum_null_rate(db),
+        _daily_quotes_shareholders_null_rate(db),
+        _daily_quotes_nav_outliers(db),
+        _daily_quotes_aum_outliers(db),
+        _daily_quotes_shareholders_outliers(db),
     ]
 
 
@@ -199,7 +219,38 @@ def _checks_anbima(db: DuckDBWarehouse, reference_date: date) -> list[ValidateRe
             name="anbima_pk_unique",
             reference_date=reference_date,
         ),
+        _anbima_redemption_days_null_rate(db, reference_date),
     ]
+
+
+def _daily_quotes_window_coverage(
+    db: DuckDBWarehouse, reference_date: date, aum_lookback_days: int
+) -> ValidateResult:
+    """Warn if staging.daily_quotes doesn't cover the full AuM lookback window — median_aum will be computed on a truncated series."""
+    required_start = reference_date - timedelta(days=aum_lookback_days)
+    min_date = db.execute("SELECT MIN(date) FROM staging.daily_quotes").fetchone()[0]
+    if min_date is None:
+        return ValidateResult(
+            check_name="daily_quotes_window_coverage",
+            passed=False,
+            severity="warning",
+            value=None,
+            threshold=f"<= {required_start}",
+            message="staging.daily_quotes is empty — cannot verify AuM window coverage",
+        )
+    passed = min_date <= required_start
+    return ValidateResult(
+        check_name="daily_quotes_window_coverage",
+        passed=passed,
+        severity="warning",
+        value=str(min_date),
+        threshold=f"<= {required_start}",
+        message=(
+            None
+            if passed
+            else f"earliest quote date is {min_date}, after required window start {required_start} — median_aum uses a truncated {(reference_date - min_date).days}-day window instead of {aum_lookback_days}"
+        ),
+    )
 
 
 def _daily_quotes_nav_null_rate(db: DuckDBWarehouse) -> ValidateResult:
@@ -221,6 +272,149 @@ def _daily_quotes_nav_null_rate(db: DuckDBWarehouse) -> ValidateResult:
             None
             if passed
             else f"{null_rate:.1%} of nav is null after ffill — returns series will be NaN for most funds"
+        ),
+    )
+
+
+def _daily_quotes_aum_null_rate(db: DuckDBWarehouse) -> ValidateResult:
+    """AuM null rate > 50% means median_aum will be null for most funds, silently excluding them from universe."""
+    null_rate = (
+        db.execute(
+            "SELECT AVG(CASE WHEN aum IS NULL THEN 1.0 ELSE 0.0 END) FROM staging.daily_quotes"
+        ).fetchone()[0]
+        or 0.0
+    )
+    passed = null_rate < 0.5
+    return ValidateResult(
+        check_name="daily_quotes_aum_null_rate",
+        passed=passed,
+        severity="warning",
+        value=f"{null_rate:.1%}",
+        threshold="< 50%",
+        message=(
+            None
+            if passed
+            else f"{null_rate:.1%} of aum is null — most funds will have null median_aum and be excluded from universe"
+        ),
+    )
+
+
+def _daily_quotes_shareholders_null_rate(db: DuckDBWarehouse) -> ValidateResult:
+    """Shareholders null rate > 50% means most funds fail the min_cotistas filter and are silently excluded from universe."""
+    null_rate = (
+        db.execute(
+            "SELECT AVG(CASE WHEN shareholders IS NULL THEN 1.0 ELSE 0.0 END) FROM staging.daily_quotes"
+        ).fetchone()[0]
+        or 0.0
+    )
+    passed = null_rate < 0.5
+    return ValidateResult(
+        check_name="daily_quotes_shareholders_null_rate",
+        passed=passed,
+        severity="warning",
+        value=f"{null_rate:.1%}",
+        threshold="< 50%",
+        message=(
+            None
+            if passed
+            else f"{null_rate:.1%} of shareholders is null — most funds will have null median_holders and be excluded from universe"
+        ),
+    )
+
+
+def _daily_quotes_nav_outliers(db: DuckDBWarehouse) -> ValidateResult:
+    """NAV > 1,000,000,000 is implausible even for the oldest funds (p99 ≈ 8,400)."""
+    n_extreme = db.execute(
+        "SELECT COUNT(*) FROM staging.daily_quotes WHERE nav IS NOT NULL AND nav > 1000000000"
+    ).fetchone()[0]
+    n = n_extreme
+    passed = n == 0
+    return ValidateResult(
+        check_name="daily_quotes_nav_outliers",
+        passed=passed,
+        severity="warning",
+        value=str(n),
+        threshold="0",
+        message=(
+            None
+            if passed
+            else f"{n_extreme} rows with nav > 1,000,000 — likely data entry errors"
+        ),
+    )
+
+
+def _daily_quotes_aum_outliers(db: DuckDBWarehouse) -> ValidateResult:
+    """AuM > 1T BRL is implausible (largest Brazilian fund is well below that)."""
+    n_extreme = db.execute(
+        "SELECT COUNT(*) FROM staging.daily_quotes WHERE aum IS NOT NULL AND aum > 1000000000000"
+    ).fetchone()[0]
+    n = n_extreme
+    passed = n == 0
+    return ValidateResult(
+        check_name="daily_quotes_aum_outliers",
+        passed=passed,
+        severity="warning",
+        value=str(n),
+        threshold="0",
+        message=(
+            None
+            if passed
+            else f"{n_extreme} rows with aum > 1T BRL — will distort median_aum and AuM filter"
+        ),
+    )
+
+
+def _daily_quotes_shareholders_outliers(db: DuckDBWarehouse) -> ValidateResult:
+    """Shareholder count cannot be negative."""
+    n = db.execute(
+        "SELECT COUNT(*) FROM staging.daily_quotes WHERE shareholders IS NOT NULL AND shareholders < 0"
+    ).fetchone()[0]
+    passed = n == 0
+    return ValidateResult(
+        check_name="daily_quotes_shareholders_outliers",
+        passed=passed,
+        severity="warning",
+        value=str(n),
+        threshold="0",
+        message=(
+            None
+            if passed
+            else f"{n} rows with negative shareholders — will corrupt median_holders and cotistas filter"
+        ),
+    )
+
+
+def _anbima_redemption_days_null_rate(
+    db: DuckDBWarehouse, reference_date: date
+) -> ValidateResult:
+    """High redemption_days null rate means many funds will be penalised with fallback in ranking."""
+    snap = snapshot_date(db, "staging.anbima", reference_date)
+    if snap is None:
+        return ValidateResult(
+            check_name="anbima_redemption_days_null_rate",
+            passed=False,
+            severity="warning",
+            value=None,
+            threshold="< 50%",
+            message="no ANBIMA snapshot — cannot check redemption_days null rate",
+        )
+    total, n_null = db.execute(
+        "SELECT COUNT(*), SUM(CASE WHEN redemption_days IS NULL THEN 1 ELSE 0 END) "
+        "FROM staging.anbima WHERE reference_date = ?",
+        [snap],
+    ).fetchone()
+    null_rate = (n_null / total) if total > 0 else 0.0
+    passed = null_rate < 0.5
+    return ValidateResult(
+        check_name="anbima_redemption_days_null_rate",
+        passed=passed,
+        severity="warning",
+        value=f"{null_rate:.1%}",
+        threshold="< 50%",
+        message=(
+            None
+            if passed
+            else f"{null_rate:.1%} of redemption_days is null — those funds get a 100-day penalty in ranking"
         ),
     )
 

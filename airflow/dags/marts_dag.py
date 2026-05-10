@@ -86,6 +86,19 @@ def fund_ranking_marts() -> None:
         with DuckDBWarehouse(_db_path()) as db:
             mart_rankings(db, reference_date, settings, force=force)
 
+    @task()
+    def validate_marts(**context) -> None:
+        from datetime import date
+
+        from src.storage import DuckDBWarehouse
+        from src.validation import validate_marts as _validate_marts
+
+        raw_date = context["params"]["reference_date"]
+        reference_date = date.fromisoformat(raw_date) if raw_date else date.today()
+
+        with DuckDBWarehouse(_db_path()) as db:
+            _validate_marts(db, reference_date)
+
     trigger_publish = TriggerDagRunOperator(
         task_id="trigger_publish",
         trigger_dag_id="fund_ranking_publish",
@@ -93,7 +106,7 @@ def fund_ranking_marts() -> None:
         reset_dag_run=True,
     )
 
-    universe() >> metrics() >> rankings() >> trigger_publish
+    universe() >> metrics() >> rankings() >> validate_marts() >> trigger_publish
 
 
 fund_ranking_marts()

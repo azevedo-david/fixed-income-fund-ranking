@@ -38,10 +38,15 @@ _ANBIMA_REQUIRED_COLUMNS = {
     "Codigo_Cvm_Subclasse",
 }
 _KNOWN_TRIBUTACAO_ALVO = {
-    "Longo Prazo",
-    "Isento",
-    "Curto Prazo",
-    "Alíquota de 15%",
+    "Longo Prazo",  # config-mapped
+    "Isento",  # config-mapped
+    "Curto Prazo",  # config-mapped
+    "Alíquota de 15%",  # config-mapped
+    "Previdenciário",  # pension funds — falls back to default_rate
+    "Outros",  # catch-all — falls back to default_rate
+    "Não Aplicável",  # falls back to default_rate
+    "Especifica",  # falls back to default_rate
+    "Indefinido",  # falls back to default_rate
 }
 
 
@@ -80,6 +85,8 @@ def _checks_inf_diario(
             name="inf_diario_date_freshness",
         ),
         _inf_diario_nav_not_fully_null(db),
+        _inf_diario_aum_null_rate(db),
+        _inf_diario_shareholders_null_rate(db),
     ]
 
 
@@ -102,6 +109,52 @@ def _inf_diario_nav_not_fully_null(db: DuckDBWarehouse) -> ValidateResult:
             None
             if passed
             else f"{null_rate:.1%} of VL_QUOTA is null — ffill will produce no valid NAV"
+        ),
+    )
+
+
+def _inf_diario_aum_null_rate(db: DuckDBWarehouse) -> ValidateResult:
+    """AuM null rate > 50% means median_aum will be null for most funds, silently excluding them from universe."""
+    null_rate = (
+        db.execute(
+            "SELECT AVG(CASE WHEN VL_PATRIM_LIQ IS NULL THEN 1.0 ELSE 0.0 END) FROM raw.inf_diario"
+        ).fetchone()[0]
+        or 0.0
+    )
+    passed = null_rate < 0.5
+    return ValidateResult(
+        check_name="inf_diario_aum_null_rate",
+        passed=passed,
+        severity="warning",
+        value=f"{null_rate:.1%}",
+        threshold="< 50%",
+        message=(
+            None
+            if passed
+            else f"{null_rate:.1%} of VL_PATRIM_LIQ is null — most funds will have null median_aum and be excluded from universe"
+        ),
+    )
+
+
+def _inf_diario_shareholders_null_rate(db: DuckDBWarehouse) -> ValidateResult:
+    """Shareholders null rate > 50% means most funds fail the min_cotistas filter and are silently excluded from universe."""
+    null_rate = (
+        db.execute(
+            "SELECT AVG(CASE WHEN NR_COTST IS NULL THEN 1.0 ELSE 0.0 END) FROM raw.inf_diario"
+        ).fetchone()[0]
+        or 0.0
+    )
+    passed = null_rate < 0.5
+    return ValidateResult(
+        check_name="inf_diario_shareholders_null_rate",
+        passed=passed,
+        severity="warning",
+        value=f"{null_rate:.1%}",
+        threshold="< 50%",
+        message=(
+            None
+            if passed
+            else f"{null_rate:.1%} of NR_COTST is null — most funds will have null median_holders and be excluded from universe"
         ),
     )
 
@@ -206,6 +259,8 @@ def _checks_registro_classe(
             name="registro_classe_forma_condominio_known",
             reference_date=reference_date,
         ),
+        _registro_classe_renda_fixa_coverage(db, reference_date),
+        _registro_classe_inception_date_null_rate(db, reference_date),
     ]
 
 
@@ -237,6 +292,70 @@ def _registro_classe_cnpj_numeric_le14(
             None
             if passed
             else f"{n_bad} CNPJ_Classe values have >14 digits after stripping — zfill(14) cannot produce a valid CNPJ"
+        ),
+    )
+
+
+def _registro_classe_renda_fixa_coverage(
+    db: DuckDBWarehouse, reference_date: date
+) -> ValidateResult:
+    """Fewer than 1000 Renda Fixa funds at the raw layer likely means Classificacao_Anbima was not populated."""
+    snap = snapshot_date(db, "raw.registro_classe", reference_date)
+    n = (
+        db.execute(
+            "SELECT COUNT(*) FROM raw.registro_classe "
+            "WHERE reference_date = ? AND Classificacao_Anbima LIKE 'Renda Fixa%'",
+            [snap],
+        ).fetchone()[0]
+        if snap is not None
+        else 0
+    )
+    passed = n >= 1000
+    return ValidateResult(
+        check_name="registro_classe_renda_fixa_coverage",
+        passed=passed,
+        severity="warning",
+        value=str(n),
+        threshold=">= 1000",
+        message=(
+            None
+            if passed
+            else f"only {n} rows have Classificacao_Anbima starting with 'Renda Fixa' — universe will be near-empty"
+        ),
+    )
+
+
+def _registro_classe_inception_date_null_rate(
+    db: DuckDBWarehouse, reference_date: date
+) -> ValidateResult:
+    """High Data_Inicio null rate at the raw layer means staging coerces many funds to null inception_date, silently excluding them from universe."""
+    snap = snapshot_date(db, "raw.registro_classe", reference_date)
+    if snap is None:
+        return ValidateResult(
+            check_name="registro_classe_inception_date_null_rate",
+            passed=False,
+            severity="warning",
+            value=None,
+            threshold="< 5%",
+            message="no snapshot available — cannot check Data_Inicio null rate",
+        )
+    total, n_null = db.execute(
+        "SELECT COUNT(*), SUM(CASE WHEN Data_Inicio IS NULL THEN 1 ELSE 0 END) "
+        "FROM raw.registro_classe WHERE reference_date = ?",
+        [snap],
+    ).fetchone()
+    null_rate = (n_null / total) if total > 0 else 0.0
+    passed = null_rate < 0.05
+    return ValidateResult(
+        check_name="registro_classe_inception_date_null_rate",
+        passed=passed,
+        severity="warning",
+        value=f"{null_rate:.1%}",
+        threshold="< 5%",
+        message=(
+            None
+            if passed
+            else f"{null_rate:.1%} of Data_Inicio is null — those funds will be silently excluded from universe"
         ),
     )
 
@@ -273,6 +392,14 @@ def _checks_registro_subclasse(
             severity="warning",
         ),
         _registro_subclasse_referential_integrity(db, reference_date),
+        check_known_values(
+            db,
+            "raw.registro_subclasse",
+            "Previdenciario",
+            {"S", "N"},
+            name="registro_subclasse_previdenciario_yn",
+            reference_date=reference_date,
+        ),
     ]
 
 
