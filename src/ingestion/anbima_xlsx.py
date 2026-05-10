@@ -12,7 +12,7 @@ from ..config import RAW_DIR
 ANBIMA_RAW = RAW_DIR / "anbima"
 CARACTERISTICAS_FILE = ANBIMA_RAW / "FUNDOS-175-CARACTERISTICAS-PUBLICO.xlsx"
 
-_MAX_FILE_AGE_DAYS = 7
+_MAX_FILE_AGE_DAYS = 15
 
 _COL_RENAME = {
     "CNPJ da Classe": "Cnpj_Da_Classe",

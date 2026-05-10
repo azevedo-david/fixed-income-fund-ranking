@@ -32,7 +32,7 @@ def daily_returns(df_clean: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def _trailing_one_window(quotas: pd.DataFrame, months: int) -> pd.DataFrame:
+def _trailing_one_window(quotas: pd.DataFrame, label: str, months: int) -> pd.DataFrame:
     """V_last / V_start − 1 per fund for a single trailing window.
 
     Input/output: flat DataFrame with GROUP_KEY columns.
@@ -41,9 +41,9 @@ def _trailing_one_window(quotas: pd.DataFrame, months: int) -> pd.DataFrame:
     cutoffs = last_dates - pd.DateOffset(months=months)
 
     out = {}
-    for i, (key, sub) in enumerate(quotas.groupby(GROUP_KEY, dropna=False)):
+    for key, sub in quotas.groupby(GROUP_KEY, dropna=False):
         dates = sub["date"]
-        cutoff = cutoffs.iloc[i]
+        cutoff = cutoffs.loc[key]
         before = dates[dates <= cutoff]
         if len(before) == 0:
             out[key] = np.nan
@@ -59,7 +59,7 @@ def _trailing_one_window(quotas: pd.DataFrame, months: int) -> pd.DataFrame:
         else:
             out[key] = v_end / v_start - 1.0
 
-    s = pd.Series(out, name=f"return_{months}m")
+    s = pd.Series(out, name=f"return_{label}")
     s.index.names = GROUP_KEY
     return s.reset_index()
 
@@ -71,8 +71,8 @@ def trailing_returns(ri: pd.DataFrame, windows: dict[str, int]) -> pd.DataFrame:
     """
     quotas = ri[GROUP_KEY + ["nav", "date"]].sort_values(GROUP_KEY + ["date"])
     result = None
-    for _label, m in windows.items():
-        part = _trailing_one_window(quotas, m)
+    for label, m in windows.items():
+        part = _trailing_one_window(quotas, label, m)
         result = (
             part if result is None else result.merge(part, on=GROUP_KEY, how="outer")
         )

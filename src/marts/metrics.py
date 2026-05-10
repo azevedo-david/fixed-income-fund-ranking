@@ -16,7 +16,6 @@ from .compute.returns import (
     GROUP_KEY,
     annualized_return,
     cdi_window_returns,
-    daily_returns,
     monthly_returns,
     pct_months_above_cdi,
     trailing_returns,
@@ -195,9 +194,12 @@ def build_metrics(
         name="cdi_daily",
     )
 
-    daily = daily_returns(quotes_df)
+    clean_quotes = (
+        quotes_df[quotes_df["nav"].notna()].sort_values(GROUP_KEY + ["date"]).copy()
+    )
+    clean_quotes["subclass_id"] = clean_quotes["subclass_id"].astype(object)
 
-    db._con.register("_daily", daily)
+    db._con.register("_quotes", clean_quotes[GROUP_KEY + ["date", "nav"]])
     db._con.register("_cdi_ts", cdi.reset_index())
     try:
         aligned = db.execute("""
@@ -205,7 +207,7 @@ def build_metrics(
                 SELECT cnpj, subclass_id,
                        MIN(date) AS first_date,
                        MAX(date) AS last_date
-                FROM _daily
+                FROM _quotes
                 GROUP BY cnpj, subclass_id
             ),
             cdi_per_fund AS (
@@ -214,37 +216,41 @@ def build_metrics(
                 CROSS JOIN _cdi_ts c
                 WHERE c.date >= f.first_date AND c.date <= f.last_date
             ),
-            with_quotes AS (
+            with_nav AS (
                 SELECT cpf.cnpj, cpf.subclass_id, cpf.date, cpf.cdi_daily,
-                       d.return_daily, d.nav
+                       q.nav
                 FROM cdi_per_fund cpf
-                LEFT JOIN _daily d
-                    ON cpf.cnpj = d.cnpj
-                   AND cpf.subclass_id IS NOT DISTINCT FROM d.subclass_id
-                   AND cpf.date = d.date
+                LEFT JOIN _quotes q
+                    ON cpf.cnpj = q.cnpj
+                   AND cpf.subclass_id IS NOT DISTINCT FROM q.subclass_id
+                   AND cpf.date = q.date
             ),
-            ffilled AS (
+            nav_ffilled AS (
                 SELECT cnpj, subclass_id, date, cdi_daily,
-                       LAST_VALUE(return_daily IGNORE NULLS) OVER (
-                           PARTITION BY cnpj, subclass_id
-                           ORDER BY date
-                           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-                       ) AS return_daily,
                        LAST_VALUE(nav IGNORE NULLS) OVER (
                            PARTITION BY cnpj, subclass_id
                            ORDER BY date
                            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
                        ) AS nav
-                FROM with_quotes
+                FROM with_nav
+            ),
+            with_returns AS (
+                SELECT cnpj, subclass_id, date, cdi_daily, nav,
+                       nav / NULLIF(LAG(nav) OVER (
+                           PARTITION BY cnpj, subclass_id ORDER BY date
+                       ), 0) - 1 AS return_daily
+                FROM nav_ffilled
             )
             SELECT cnpj, subclass_id, date, return_daily, nav, cdi_daily
-            FROM ffilled
+            FROM with_returns
+            WHERE return_daily IS NOT NULL
             ORDER BY cnpj, subclass_id, date
             """).df()
     finally:
-        db._con.unregister("_daily")
+        db._con.unregister("_quotes")
         db._con.unregister("_cdi_ts")
 
+    aligned["subclass_id"] = aligned["subclass_id"].astype(object)
     ri = aligned.copy()
     ri["excess_daily"] = ri["return_daily"] - ri["cdi_daily"]
 
@@ -268,6 +274,7 @@ def build_metrics(
     )
 
     metrics = compute_fund_metrics(ri, cdi, settings.windows, reference_date)
+    metrics["subclass_id"] = metrics["subclass_id"].astype(object)
 
     ref = pd.Timestamp(reference_date)
     cdi_window = cdi_window_returns(cdi, ref, settings.windows)
@@ -293,6 +300,7 @@ def build_metrics(
         .drop(columns=["fund_cnpj"])
         .drop_duplicates(subset=["cnpj", "subclass_id"])
     )
+    meta["subclass_id"] = meta["subclass_id"].astype(object)
     before_merge = len(metrics)
     df = metrics.merge(meta, on=GROUP_KEY, how="left")
     if len(df) > before_merge:

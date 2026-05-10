@@ -62,11 +62,8 @@ def rank_funds(
     sc = settings.scoring
     access = _INVESTOR_ACCESS[investor_type]
 
-    eligible = (
-        df_enriched[df_enriched["investor_level"] <= access]
-        .dropna(subset=["redemption_days"])
-        .copy()
-    )
+    eligible = df_enriched[df_enriched["investor_level"] <= access].copy()
+    eligible["redemption_days"] = eligible["redemption_days"].fillna(100)
     if eligible.empty:
         return pd.DataFrame()
 
