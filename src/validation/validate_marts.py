@@ -13,24 +13,33 @@ from ._base import (
     check_snapshot_exists,
     snapshot_date,
 )
+from ..config import Settings
 from ..storage import DuckDBWarehouse
 
 _TASK = "validate_marts"
 _DATASET = "marts"
 
 
-def validate_marts(db: DuckDBWarehouse, reference_date: date) -> list[ValidateResult]:
+def validate_marts(
+    db: DuckDBWarehouse, reference_date: date, settings: Settings | None = None
+) -> list[ValidateResult]:
     """Run all marts-layer checks, write to log, and raise on error-level failures."""
     return check_and_gate(
-        db, _build_checks(db, reference_date), _TASK, _DATASET, reference_date
+        db,
+        _build_checks(db, reference_date, settings),
+        _TASK,
+        _DATASET,
+        reference_date,
     )
 
 
-def _build_checks(db: DuckDBWarehouse, reference_date: date) -> list[ValidateResult]:
+def _build_checks(
+    db: DuckDBWarehouse, reference_date: date, settings: Settings | None
+) -> list[ValidateResult]:
     return [
         *_checks_universe(db, reference_date),
         *_checks_metrics(db, reference_date),
-        *_checks_rankings(db, reference_date),
+        *_checks_rankings(db, reference_date, settings),
     ]
 
 
@@ -137,8 +146,10 @@ def _checks_metrics(db: DuckDBWarehouse, reference_date: date) -> list[ValidateR
     ]
 
 
-def _checks_rankings(db: DuckDBWarehouse, reference_date: date) -> list[ValidateResult]:
-    return [
+def _checks_rankings(
+    db: DuckDBWarehouse, reference_date: date, settings: Settings | None
+) -> list[ValidateResult]:
+    checks = [
         check_snapshot_exists(
             db, "marts.rankings", reference_date, name="rankings_snapshot_exists"
         ),
@@ -155,7 +166,73 @@ def _checks_rankings(db: DuckDBWarehouse, reference_date: date) -> list[Validate
             name="rankings_pk_unique",
             reference_date=reference_date,
         ),
+        _rankings_score_in_range(db, reference_date),
     ]
+    if settings is not None:
+        checks.append(_rankings_combo_coverage(db, reference_date, settings))
+    return checks
+
+
+def _rankings_score_in_range(
+    db: DuckDBWarehouse, reference_date: date
+) -> ValidateResult:
+    """Score outside [0, 1] means weight vector misconfigured or accessibility blend overflowed."""
+    snap = snapshot_date(db, "marts.rankings", reference_date)
+    n = (
+        db.execute(
+            "SELECT COUNT(*) FROM marts.rankings "
+            "WHERE reference_date = ? AND (score < 0 OR score > 1)",
+            [snap],
+        ).fetchone()[0]
+        if snap is not None
+        else 0
+    )
+    passed = n == 0
+    return ValidateResult(
+        check_name="rankings_score_in_range",
+        passed=passed,
+        severity="warning",
+        value=str(n),
+        threshold="0",
+        message=(
+            None
+            if passed
+            else f"{n} rankings rows have score outside [0, 1] — weight config may be invalid"
+        ),
+    )
+
+
+def _rankings_combo_coverage(
+    db: DuckDBWarehouse, reference_date: date, settings: Settings
+) -> ValidateResult:
+    """Every (purpose, profile, investor_type) in settings.rankings should have at least one fund."""
+    snap = snapshot_date(db, "marts.rankings", reference_date)
+    present = (
+        set(
+            db.execute(
+                "SELECT DISTINCT purpose, profile, investor_type "
+                "FROM marts.rankings WHERE reference_date = ?",
+                [snap],
+            ).fetchall()
+        )
+        if snap is not None
+        else set()
+    )
+    expected = {(c.purpose, c.profile, c.investor_type) for c in settings.rankings}
+    missing = expected - present
+    passed = not missing
+    return ValidateResult(
+        check_name="rankings_combo_coverage",
+        passed=passed,
+        severity="warning",
+        value=f"{len(present)}/{len(expected)}",
+        threshold=f"all {len(expected)} combos present",
+        message=(
+            None
+            if passed
+            else f"{len(missing)} combo(s) missing from rankings: {sorted(missing)}"
+        ),
+    )
 
 
 def _outlier_count(db: DuckDBWarehouse, reference_date: date, condition: str) -> int:

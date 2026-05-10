@@ -21,12 +21,14 @@ _DATASET = "staging"
 
 
 def validate_staging(
-    db: DuckDBWarehouse, reference_date: date, aum_lookback_days: int = 30
+    db: DuckDBWarehouse,
+    reference_date: date,
+    quotes_start: date | None = None,
 ) -> list[ValidateResult]:
     """Run all staging-layer checks, write to log, and raise on error-level failures."""
     return check_and_gate(
         db,
-        _build_checks(db, reference_date, aum_lookback_days),
+        _build_checks(db, reference_date, quotes_start),
         _TASK,
         _DATASET,
         reference_date,
@@ -34,13 +36,15 @@ def validate_staging(
 
 
 def _build_checks(
-    db: DuckDBWarehouse, reference_date: date, aum_lookback_days: int = 30
+    db: DuckDBWarehouse,
+    reference_date: date,
+    quotes_start: date | None = None,
 ) -> list[ValidateResult]:
     return [
         *_checks_registry(db, reference_date),
-        *_checks_daily_quotes(db, reference_date, aum_lookback_days),
+        *_checks_daily_quotes(db, reference_date, quotes_start),
         *_checks_fees(db, reference_date),
-        *_checks_cdi_rates(db, reference_date),
+        *_checks_cdi_rates(db, reference_date, quotes_start),
         *_checks_anbima(db, reference_date),
     ]
 
@@ -74,6 +78,14 @@ def _checks_registry(db: DuckDBWarehouse, reference_date: date) -> list[Validate
             name="registry_fund_cnpj_not_null",
             reference_date=reference_date,
         ),
+        check_column_no_nulls(
+            db,
+            "staging.registry",
+            "fund_name",
+            name="registry_fund_name_not_null",
+            reference_date=reference_date,
+            severity="warning",
+        ),
         check_pk_unique(
             db,
             "staging.registry",
@@ -93,7 +105,9 @@ def _checks_registry(db: DuckDBWarehouse, reference_date: date) -> list[Validate
 
 
 def _checks_daily_quotes(
-    db: DuckDBWarehouse, reference_date: date, aum_lookback_days: int = 30
+    db: DuckDBWarehouse,
+    reference_date: date,
+    quotes_start: date | None = None,
 ) -> list[ValidateResult]:
     return [
         check_row_count(db, "staging.daily_quotes", name="daily_quotes_row_count"),
@@ -116,7 +130,7 @@ def _checks_daily_quotes(
             ["fund_cnpj", "subclass_id", "date"],
             name="daily_quotes_pk_unique",
         ),
-        _daily_quotes_window_coverage(db, reference_date, aum_lookback_days),
+        _daily_quotes_window_coverage(db, quotes_start),
         _daily_quotes_nav_null_rate(db),
         _daily_quotes_aum_null_rate(db),
         _daily_quotes_shareholders_null_rate(db),
@@ -167,7 +181,7 @@ def _checks_fees(db: DuckDBWarehouse, reference_date: date) -> list[ValidateResu
 
 
 def _checks_cdi_rates(
-    db: DuckDBWarehouse, reference_date: date
+    db: DuckDBWarehouse, reference_date: date, quotes_start: date | None = None
 ) -> list[ValidateResult]:
     return [
         check_row_count(db, "staging.cdi_rates", name="cdi_rates_row_count"),
@@ -178,6 +192,7 @@ def _checks_cdi_rates(
             reference_date,
             name="cdi_rates_date_freshness",
         ),
+        _cdi_rates_window_coverage(db, quotes_start),
         _cdi_rates_rate_not_negative(db),
         _cdi_rates_no_large_gaps(db),
     ]
@@ -224,31 +239,59 @@ def _checks_anbima(db: DuckDBWarehouse, reference_date: date) -> list[ValidateRe
 
 
 def _daily_quotes_window_coverage(
-    db: DuckDBWarehouse, reference_date: date, aum_lookback_days: int
+    db: DuckDBWarehouse, quotes_start: date | None
 ) -> ValidateResult:
-    """Warn if staging.daily_quotes doesn't cover the full AuM lookback window — median_aum will be computed on a truncated series."""
-    required_start = reference_date - timedelta(days=aum_lookback_days)
+    """Warn if staging.daily_quotes doesn't cover the full trailing-return window — long-window alphas will be NaN for all funds."""
     min_date = db.execute("SELECT MIN(date) FROM staging.daily_quotes").fetchone()[0]
-    if min_date is None:
+    if min_date is None or quotes_start is None:
         return ValidateResult(
             check_name="daily_quotes_window_coverage",
             passed=False,
             severity="warning",
             value=None,
-            threshold=f"<= {required_start}",
-            message="staging.daily_quotes is empty — cannot verify AuM window coverage",
+            threshold=f"<= {quotes_start}",
+            message="staging.daily_quotes is empty — cannot verify window coverage",
         )
-    passed = min_date <= required_start
+    passed = min_date <= quotes_start
     return ValidateResult(
         check_name="daily_quotes_window_coverage",
         passed=passed,
         severity="warning",
         value=str(min_date),
-        threshold=f"<= {required_start}",
+        threshold=f"<= {quotes_start}",
         message=(
             None
             if passed
-            else f"earliest quote date is {min_date}, after required window start {required_start} — median_aum uses a truncated {(reference_date - min_date).days}-day window instead of {aum_lookback_days}"
+            else f"earliest quote date {min_date} is after required window start {quotes_start} — long-window trailing returns will be NaN for all funds"
+        ),
+    )
+
+
+def _cdi_rates_window_coverage(
+    db: DuckDBWarehouse, quotes_start: date | None
+) -> ValidateResult:
+    """Warn if staging.cdi_rates doesn't cover the full trailing-return window — CDI benchmark will be truncated for long windows."""
+    min_date = db.execute("SELECT MIN(date) FROM staging.cdi_rates").fetchone()[0]
+    if min_date is None or quotes_start is None:
+        return ValidateResult(
+            check_name="cdi_rates_window_coverage",
+            passed=False,
+            severity="warning",
+            value=None,
+            threshold=f"<= {quotes_start}",
+            message="staging.cdi_rates is empty — cannot verify window coverage",
+        )
+    passed = min_date <= quotes_start
+    return ValidateResult(
+        check_name="cdi_rates_window_coverage",
+        passed=passed,
+        severity="warning",
+        value=str(min_date),
+        threshold=f"<= {quotes_start}",
+        message=(
+            None
+            if passed
+            else f"earliest CDI date {min_date} is after required window start {quotes_start} — alpha will be computed against a truncated benchmark"
         ),
     )
 
