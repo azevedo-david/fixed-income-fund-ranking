@@ -6,11 +6,13 @@ Tasks are chained sequentially because DuckDB allows only one write
 connection per file at a time.
 
 Requires Airflow Variable: duckdb_path — absolute path to the .duckdb file.
+Optional Airflow Variable: config_yaml_path — absolute path to config.yaml; falls back to repo default.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 
 from airflow.decorators import dag, task
 from airflow.models import Variable
@@ -20,6 +22,13 @@ from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 
 def _db_path() -> str:
     return Variable.get("duckdb_path")
+
+
+def _settings():
+    from src.config import Settings
+
+    path = Variable.get("config_yaml_path", default_var=None)
+    return Settings.from_yaml(Path(path)) if path else Settings.from_yaml()
 
 
 _DEFAULT_ARGS = {}
@@ -91,8 +100,11 @@ def fund_ranking_stage() -> None:
         from src.storage import DuckDBWarehouse
         from src.validation import validate_staging as _validate_staging
 
+        from dataclasses import replace as _replace
+
+        settings = _replace(_settings(), reference_date=date.today())
         with DuckDBWarehouse(_db_path()) as db:
-            _validate_staging(db, date.today())
+            _validate_staging(db, date.today(), quotes_start=settings.quotes_start)
 
     trigger_marts = TriggerDagRunOperator(
         task_id="trigger_marts",

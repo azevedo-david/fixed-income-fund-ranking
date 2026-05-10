@@ -21,6 +21,7 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
     PYTHONPATH: /opt/app
     AIRFLOW_VAR_DUCKDB_PATH: /opt/app/data/fund_ranking.duckdb
+    AIRFLOW_VAR_CONFIG_YAML_PATH: /opt/app/config.yaml
   volumes:
     - ../:/opt/app                  # project root → DAG can import from src.*
     - ./dags:/opt/airflow/dags      # DAG files picked up by scheduler

@@ -9,11 +9,13 @@ Produces:
   output/metrics.parquet  — full metrics table for downstream analysis
 
 Requires Airflow Variable: duckdb_path — absolute path to the .duckdb file.
+Optional Airflow Variable: config_yaml_path — absolute path to config.yaml; falls back to repo default.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from airflow.decorators import dag, task
 from airflow.models import Variable
@@ -22,6 +24,13 @@ from airflow.models.param import Param
 
 def _db_path() -> str:
     return Variable.get("duckdb_path")
+
+
+def _settings():
+    from src.config import Settings
+
+    path = Variable.get("config_yaml_path", default_var=None)
+    return Settings.from_yaml(Path(path)) if path else Settings.from_yaml()
 
 
 _DEFAULT_ARGS = {
@@ -48,12 +57,11 @@ def fund_ranking_publish() -> None:
     def report(**context) -> None:
         from datetime import date
 
-        from src.config import Settings
         from src.publish.report import write_report
         from src.storage import DuckDBWarehouse
 
         raw_date = context["params"]["reference_date"]
-        settings = Settings.from_yaml()
+        settings = _settings()
         reference_date = date.fromisoformat(raw_date) if raw_date else date.today()
 
         with DuckDBWarehouse(_db_path()) as db:
@@ -63,12 +71,11 @@ def fund_ranking_publish() -> None:
     def publish(**context) -> None:
         from datetime import date
 
-        from src.config import Settings
         from src.publish.publish import write_json, write_parquet
         from src.storage import DuckDBWarehouse
 
         raw_date = context["params"]["reference_date"]
-        settings = Settings.from_yaml()
+        settings = _settings()
         reference_date = date.fromisoformat(raw_date) if raw_date else date.today()
 
         with DuckDBWarehouse(_db_path()) as db:
