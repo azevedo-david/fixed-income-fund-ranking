@@ -30,6 +30,15 @@ def fetch_raw_registry(db: DuckDBWarehouse) -> pd.DataFrame | None:
     return df
 
 
+_STATUS_PRIORITY = {
+    "Em Funcionamento Normal": 4,
+    "Fase Pré-Operacional": 3,
+    "Em Processo de Transformação": 2,
+    "Em Liquidação": 1,
+    "Cancelado": 0,
+}
+
+
 def _clean_classe(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     out["Data_Inicio"] = pd.to_datetime(out["Data_Inicio"], errors="coerce")
@@ -60,8 +69,12 @@ def _clean_classe(df: pd.DataFrame) -> pd.DataFrame:
             "is_exclusive",
         ]
     ]
+    # Primary sort: status priority (active > cancelled); secondary: inception_date.
+    # Keeps the active registration when the same CNPJ appears as both active and cancelled.
     return (
-        out.sort_values("inception_date", na_position="first")
+        out.assign(_sp=out["status"].map(_STATUS_PRIORITY).fillna(-1))
+        .sort_values(["_sp", "inception_date"], na_position="first")
+        .drop(columns=["_sp"])
         .drop_duplicates(subset="fund_cnpj", keep="last")
         .reset_index(drop=True)
     )
