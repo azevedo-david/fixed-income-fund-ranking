@@ -10,6 +10,7 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 GROUP_KEY = ["cnpj", "subclass_id"]
+_SUB_SENTINEL = "__NS__"
 
 
 def daily_returns(df_clean: pd.DataFrame) -> pd.DataFrame:
@@ -69,13 +70,17 @@ def trailing_returns(ri: pd.DataFrame, windows: dict[str, int]) -> pd.DataFrame:
 
     Output: flat DataFrame with GROUP_KEY + return_{label} columns.
     """
-    quotas = ri[GROUP_KEY + ["nav", "date"]].sort_values(GROUP_KEY + ["date"])
+    quotas = ri[GROUP_KEY + ["nav", "date"]].sort_values(GROUP_KEY + ["date"]).copy()
+    quotas["subclass_id"] = quotas["subclass_id"].fillna(_SUB_SENTINEL)
     result = None
     for label, m in windows.items():
         part = _trailing_one_window(quotas, label, m)
         result = (
             part if result is None else result.merge(part, on=GROUP_KEY, how="outer")
         )
+    result["subclass_id"] = result["subclass_id"].mask(
+        result["subclass_id"] == _SUB_SENTINEL, np.nan
+    )
     return result
 
 
