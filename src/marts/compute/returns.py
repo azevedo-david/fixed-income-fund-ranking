@@ -119,7 +119,10 @@ def pct_months_above_cdi(monthly: pd.DataFrame) -> pd.DataFrame:
 
 
 def annualized_return(ri: pd.DataFrame) -> pd.DataFrame:
-    """CAGR: (V_last / V_first) ** (365 / span_days) - 1 per fund.
+    """Trading-day CAGR: (V_last / V_first) ** (252 / n_observations) - 1.
+
+    n_observations is the number of daily-return rows per fund. Uses 252
+    to match the trading-day annualisation in volatility_and_sharpe.
 
     Output: flat DataFrame with GROUP_KEY + annualized_return columns.
     """
@@ -127,12 +130,10 @@ def annualized_return(ri: pd.DataFrame) -> pd.DataFrame:
     def _cagr(sub: pd.DataFrame) -> float:
         sub = sub.sort_values("date")
         q = sub["nav"].dropna()
-        if len(q) < 2 or q.iloc[0] == 0:
+        n = len(q)
+        if n < 2 or q.iloc[0] == 0:
             return np.nan
-        span = (sub["date"].max() - sub["date"].min()).days
-        if span == 0:
-            return np.nan
-        return float((q.iloc[-1] / q.iloc[0]) ** (365.0 / span) - 1.0)
+        return float((q.iloc[-1] / q.iloc[0]) ** (252.0 / n) - 1.0)
 
     return (
         ri.groupby(GROUP_KEY, dropna=False)
