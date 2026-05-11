@@ -82,8 +82,7 @@ def fund_ranking_publish() -> None:
             write_json(db, reference_date, settings)
             write_parquet(db, reference_date, settings)
 
-    report()
-    publish()
+    report() >> publish()
 
 
 fund_ranking_publish()
