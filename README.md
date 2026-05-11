@@ -77,8 +77,7 @@ session. The pipeline reads it on every run and raises an error if it is more th
 
 ```bash
 poetry install
-cd airflow
-docker compose -f docker-compose-airflow.yml up
+docker compose -f airflow/docker-compose-airflow.yml up
 ```
 
 Set the `duckdb_path` Airflow Variable to the absolute path of the DuckDB file
