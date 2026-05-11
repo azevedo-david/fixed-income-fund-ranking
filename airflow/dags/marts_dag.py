@@ -38,6 +38,7 @@ _DEFAULT_ARGS = {}
     start_date=datetime(2025, 1, 1),
     catchup=False,
     default_args=_DEFAULT_ARGS,
+    render_template_as_native_obj=True,
     params={
         "reference_date": Param(None, type=["null", "string"], format="date"),
         "force": Param(False, type="boolean"),
