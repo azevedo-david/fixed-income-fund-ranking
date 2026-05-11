@@ -139,7 +139,14 @@ def build_universe(
     last_quote = pd.to_datetime(eligible["last_quote_date"])
     first_quote = pd.to_datetime(eligible["first_quote_date"])
     span_days_series = (last_quote - first_quote).dt.days
-    obs_ratio = eligible["quote_count"] / span_days_series.replace(0, np.nan)
+    span_bdays = pd.Series(
+        np.busday_count(
+            first_quote.values.astype("datetime64[D]"),
+            (last_quote + pd.Timedelta(days=1)).values.astype("datetime64[D]"),
+        ),
+        index=eligible.index,
+    )
+    obs_ratio = eligible["quote_count"] / span_bdays.replace(0, np.nan)
     fresh_mask = (
         ref_ts - last_quote
     ).dt.days <= settings.universe.max_quote_staleness_days
