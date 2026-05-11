@@ -20,7 +20,6 @@ from src.marts.compute.risk import max_drawdown, volatility_and_sharpe
 from src.marts.metrics import (
     _cdi_annualised,
     compute_fund_metrics,
-    filter_min_span,
     map_investor_level,
     span_days,
 )
@@ -143,7 +142,7 @@ def test_annualized_return_approx():
 
 
 # ---------------------------------------------------------------------------
-# span_days and filter_min_span
+# span_days
 # ---------------------------------------------------------------------------
 
 
@@ -151,16 +150,6 @@ def test_span_days_two_rows():
     result = span_days(_make_ri(10))
     assert len(result) == 2
     assert (result["span_days"] > 0).all()
-
-
-def test_filter_min_span_removes_short_history():
-    filtered = filter_min_span(_make_ri(10), min_span_days=200)
-    assert filtered.empty
-
-
-def test_filter_min_span_keeps_long_history():
-    filtered = filter_min_span(_make_ri(), min_span_days=30)
-    assert set(filtered["cnpj"].unique()) == {CNPJ_A, CNPJ_B}
 
 
 # ---------------------------------------------------------------------------

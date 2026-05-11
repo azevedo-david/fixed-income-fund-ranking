@@ -3,10 +3,11 @@ force_download: false
 reference_date: null  # overridden by --reference-date CLI flag or DAG param
 
 universe:
-  min_span_days:     365
-  aum_lookback_days: 30
-  min_aum:           15_000_000
-  min_cotistas:      300
+  min_span_days:            365
+  aum_lookback_days:        30
+  min_aum:                  15_000_000
+  min_cotistas:             300
+  max_quote_staleness_days: 30
 
 windows:
   "1m":  1

@@ -32,6 +32,7 @@ class UniverseConfig:
     aum_lookback_days: int
     min_aum: float
     min_cotistas: int
+    max_quote_staleness_days: int
 
 
 @dataclass(frozen=True)

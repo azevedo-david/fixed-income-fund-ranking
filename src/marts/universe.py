@@ -107,21 +107,50 @@ def build_universe(
         - pd.Timedelta(days=settings.universe.aum_lookback_days)
     ).date()
 
-    aum_metrics = db.execute(
+    quote_metrics = db.execute(
         """
         SELECT fund_cnpj, subclass_id,
-               MEDIAN(aum) AS median_aum,
-               MEDIAN(shareholders) AS median_holders
+               MEDIAN(aum) FILTER (WHERE date >= ? AND date <= ?) AS median_aum,
+               MEDIAN(shareholders) FILTER (WHERE date >= ? AND date <= ?) AS median_holders,
+               MIN(date) AS first_quote_date,
+               MAX(date) AS last_quote_date
         FROM staging.daily_quotes
-        WHERE date >= ? AND date <= ?
+        WHERE date <= ?
         GROUP BY fund_cnpj, subclass_id
         """,
-        [window_start, reference_date],
+        [
+            window_start,
+            reference_date,
+            window_start,
+            reference_date,
+            reference_date,
+        ],
     ).df()
 
-    eligible = eligible.merge(aum_metrics, on=["fund_cnpj", "subclass_id"], how="left")
+    eligible = eligible.merge(
+        quote_metrics, on=["fund_cnpj", "subclass_id"], how="left"
+    )
     eligible = eligible[eligible["median_aum"].notna()].reset_index(drop=True)
     logger.debug("universe: %d combos after AuM join", len(eligible))
+
+    ref_ts = pd.Timestamp(reference_date)
+    last_quote = pd.to_datetime(eligible["last_quote_date"])
+    first_quote = pd.to_datetime(eligible["first_quote_date"])
+    fresh_mask = (
+        ref_ts - last_quote
+    ).dt.days <= settings.universe.max_quote_staleness_days
+    span_mask = (last_quote - first_quote).dt.days >= settings.universe.min_span_days
+    dropped_stale = int((~fresh_mask).sum())
+    dropped_short = int((fresh_mask & ~span_mask).sum())
+    eligible = eligible[fresh_mask & span_mask].reset_index(drop=True)
+    logger.debug(
+        "universe: dropped %d stale (>%dd since last quote), %d short (<%dd span)",
+        dropped_stale,
+        settings.universe.max_quote_staleness_days,
+        dropped_short,
+        settings.universe.min_span_days,
+    )
+    eligible = eligible.drop(columns=["first_quote_date", "last_quote_date"])
 
     anbima = _load_snapshot(db, "staging.anbima", reference_date)
     anbima_cols = [

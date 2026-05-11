@@ -40,13 +40,6 @@ def span_days(ri: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def filter_min_span(ri: pd.DataFrame, min_span_days: int) -> pd.DataFrame:
-    """Drop funds with fewer than min_span_days of history."""
-    span = span_days(ri)
-    keep = span[span["span_days"] >= min_span_days][GROUP_KEY]
-    return ri.merge(keep, on=GROUP_KEY, how="inner")
-
-
 def map_investor_level(publico_alvo: pd.Series) -> pd.Series:
     """0 = geral, 1 = qualificado, 2 = profissional."""
     s = publico_alvo.fillna("").str.lower()
@@ -253,25 +246,6 @@ def build_metrics(
     aligned["subclass_id"] = aligned["subclass_id"].astype(object)
     ri = aligned.copy()
     ri["excess_daily"] = ri["return_daily"] - ri["cdi_daily"]
-
-    funds_before_span = ri[GROUP_KEY].drop_duplicates().shape[0]
-    ri = filter_min_span(ri, settings.universe.min_span_days)
-    funds_after_span = ri[GROUP_KEY].drop_duplicates().shape[0]
-
-    if ri.empty:
-        logger.warning(
-            "metrics: all funds filtered by min_span_days=%d for %s",
-            settings.universe.min_span_days,
-            reference_date,
-        )
-        return pd.DataFrame(columns=["fund_cnpj", "subclass_id", "reference_date"])
-
-    logger.info(
-        "metrics: %d funds after span filter for %s (removed %d)",
-        funds_after_span,
-        reference_date,
-        funds_before_span - funds_after_span,
-    )
 
     metrics = compute_fund_metrics(ri, cdi, settings.windows, reference_date)
     metrics["subclass_id"] = metrics["subclass_id"].astype(object)
