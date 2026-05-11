@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import date
 
+import numpy as np
 import pandas as pd
 
 from ..config import Settings
@@ -113,7 +114,8 @@ def build_universe(
                MEDIAN(aum) FILTER (WHERE date >= ? AND date <= ?) AS median_aum,
                MEDIAN(shareholders) FILTER (WHERE date >= ? AND date <= ?) AS median_holders,
                MIN(date) AS first_quote_date,
-               MAX(date) AS last_quote_date
+               MAX(date) AS last_quote_date,
+               COUNT(*) AS quote_count
         FROM staging.daily_quotes
         WHERE date <= ?
         GROUP BY fund_cnpj, subclass_id
@@ -136,21 +138,29 @@ def build_universe(
     ref_ts = pd.Timestamp(reference_date)
     last_quote = pd.to_datetime(eligible["last_quote_date"])
     first_quote = pd.to_datetime(eligible["first_quote_date"])
+    span_days_series = (last_quote - first_quote).dt.days
+    obs_ratio = eligible["quote_count"] / span_days_series.replace(0, np.nan)
     fresh_mask = (
         ref_ts - last_quote
     ).dt.days <= settings.universe.max_quote_staleness_days
-    span_mask = (last_quote - first_quote).dt.days >= settings.universe.min_span_days
+    span_mask = span_days_series >= settings.universe.min_span_days
+    dense_mask = obs_ratio >= settings.universe.min_obs_ratio
     dropped_stale = int((~fresh_mask).sum())
     dropped_short = int((fresh_mask & ~span_mask).sum())
-    eligible = eligible[fresh_mask & span_mask].reset_index(drop=True)
+    dropped_sparse = int((fresh_mask & span_mask & ~dense_mask).sum())
+    eligible = eligible[fresh_mask & span_mask & dense_mask].reset_index(drop=True)
     logger.debug(
-        "universe: dropped %d stale (>%dd since last quote), %d short (<%dd span)",
+        "universe: dropped %d stale (>%dd), %d short (<%dd span), %d sparse (obs/span<%.2f)",
         dropped_stale,
         settings.universe.max_quote_staleness_days,
         dropped_short,
         settings.universe.min_span_days,
+        dropped_sparse,
+        settings.universe.min_obs_ratio,
     )
-    eligible = eligible.drop(columns=["first_quote_date", "last_quote_date"])
+    eligible = eligible.drop(
+        columns=["first_quote_date", "last_quote_date", "quote_count"]
+    )
 
     anbima = _load_snapshot(db, "staging.anbima", reference_date)
     anbima_cols = [

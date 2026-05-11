@@ -33,6 +33,7 @@ class UniverseConfig:
     min_aum: float
     min_cotistas: int
     max_quote_staleness_days: int
+    min_obs_ratio: float
 
 
 @dataclass(frozen=True)

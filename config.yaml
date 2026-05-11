@@ -8,6 +8,7 @@ universe:
   min_aum:                  15_000_000
   min_cotistas:             300
   max_quote_staleness_days: 30
+  min_obs_ratio:            0.5
 
 windows:
   "1m":  1

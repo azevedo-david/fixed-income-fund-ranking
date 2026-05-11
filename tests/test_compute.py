@@ -48,10 +48,8 @@ def _make_quotes(n_days: int = N_DAYS) -> pd.DataFrame:
 
 
 def _make_ri(n_days: int = N_DAYS) -> pd.DataFrame:
-    """Daily-returns DataFrame as consumed by compute_fund_metrics (excess_daily included)."""
-    ri = daily_returns(_make_quotes(n_days))
-    ri["excess_daily"] = ri["return_daily"] - 0.0001
-    return ri
+    """Daily-returns DataFrame as consumed by compute_fund_metrics."""
+    return daily_returns(_make_quotes(n_days))
 
 
 def _make_cdi(n_days: int = N_DAYS, rate: float = 0.0001) -> pd.Series:
@@ -164,13 +162,13 @@ def test_span_days_two_rows():
 
 
 def test_volatility_and_sharpe_shape():
-    result = volatility_and_sharpe(_make_ri())
+    result = volatility_and_sharpe(_make_ri(), _make_cdi())
     assert len(result) == 2
     assert {"volatility", "sharpe_excess", "sharpe_raw"}.issubset(result.columns)
 
 
 def test_volatility_positive():
-    result = volatility_and_sharpe(_make_ri())
+    result = volatility_and_sharpe(_make_ri(), _make_cdi())
     assert (result["volatility"] > 0).all()
 
 

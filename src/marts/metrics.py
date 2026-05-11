@@ -85,7 +85,7 @@ def compute_fund_metrics(
         trailing,
         annualized_return(ri),
         pct_months_above_cdi(monthly_returns(ri, cdi_daily)),
-        volatility_and_sharpe(ri),
+        volatility_and_sharpe(ri, cdi_daily),
         max_drawdown(ri),
         span_days(ri),
     ]
@@ -193,59 +193,25 @@ def build_metrics(
     clean_quotes["subclass_id"] = clean_quotes["subclass_id"].astype(object)
 
     db._con.register("_quotes", clean_quotes[GROUP_KEY + ["date", "nav"]])
-    db._con.register("_cdi_ts", cdi.reset_index())
     try:
         aligned = db.execute("""
-            WITH fund_date_range AS (
-                SELECT cnpj, subclass_id,
-                       MIN(date) AS first_date,
-                       MAX(date) AS last_date
-                FROM _quotes
-                GROUP BY cnpj, subclass_id
-            ),
-            cdi_per_fund AS (
-                SELECT f.cnpj, f.subclass_id, c.date, c.cdi_daily
-                FROM fund_date_range f
-                CROSS JOIN _cdi_ts c
-                WHERE c.date >= f.first_date AND c.date <= f.last_date
-            ),
-            with_nav AS (
-                SELECT cpf.cnpj, cpf.subclass_id, cpf.date, cpf.cdi_daily,
-                       q.nav
-                FROM cdi_per_fund cpf
-                LEFT JOIN _quotes q
-                    ON cpf.cnpj = q.cnpj
-                   AND cpf.subclass_id IS NOT DISTINCT FROM q.subclass_id
-                   AND cpf.date = q.date
-            ),
-            nav_ffilled AS (
-                SELECT cnpj, subclass_id, date, cdi_daily,
-                       LAST_VALUE(nav IGNORE NULLS) OVER (
-                           PARTITION BY cnpj, subclass_id
-                           ORDER BY date
-                           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-                       ) AS nav
-                FROM with_nav
-            ),
-            with_returns AS (
-                SELECT cnpj, subclass_id, date, cdi_daily, nav,
+            WITH with_returns AS (
+                SELECT cnpj, subclass_id, date, nav,
                        nav / NULLIF(LAG(nav) OVER (
                            PARTITION BY cnpj, subclass_id ORDER BY date
                        ), 0) - 1 AS return_daily
-                FROM nav_ffilled
+                FROM _quotes
             )
-            SELECT cnpj, subclass_id, date, return_daily, nav, cdi_daily
+            SELECT cnpj, subclass_id, date, return_daily, nav
             FROM with_returns
             WHERE return_daily IS NOT NULL
             ORDER BY cnpj, subclass_id, date
             """).df()
     finally:
         db._con.unregister("_quotes")
-        db._con.unregister("_cdi_ts")
 
     aligned["subclass_id"] = aligned["subclass_id"].astype(object)
-    ri = aligned.copy()
-    ri["excess_daily"] = ri["return_daily"] - ri["cdi_daily"]
+    ri = aligned
 
     metrics = compute_fund_metrics(ri, cdi, settings.windows, reference_date)
     metrics["subclass_id"] = metrics["subclass_id"].astype(object)
