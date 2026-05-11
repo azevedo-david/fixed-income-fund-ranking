@@ -15,7 +15,6 @@ from pathlib import Path
 from airflow.decorators import dag, task
 from airflow.models import Variable
 from airflow.models.param import Param
-from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 
 
 def _db_path() -> str:
@@ -107,15 +106,19 @@ def fund_ranking_marts() -> None:
         with DuckDBWarehouse(_db_path()) as db:
             _validate_marts(db, reference_date, settings)
 
-    trigger_publish = TriggerDagRunOperator(
-        task_id="trigger_publish",
-        trigger_dag_id="fund_ranking_publish",
-        wait_for_completion=False,
-        reset_dag_run=True,
-        conf={"reference_date": "{{ params.reference_date }}"},
-    )
+    @task()
+    def trigger_publish(**context) -> None:
+        from airflow.api.common.trigger_dag import trigger_dag
 
-    universe() >> metrics() >> rankings() >> validate_marts() >> trigger_publish
+        raw_date = context["params"]["reference_date"]
+        conf = {"reference_date": raw_date} if raw_date else None
+        trigger_dag(
+            dag_id="fund_ranking_publish",
+            conf=conf,
+            replace_microseconds=False,
+        )
+
+    universe() >> metrics() >> rankings() >> validate_marts() >> trigger_publish()
 
 
 fund_ranking_marts()
