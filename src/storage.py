@@ -162,6 +162,15 @@ class DuckDBWarehouse:
         return self._con.execute(sql, params or [])
 
     @contextmanager
+    def temp_view(self, name: str, df: pd.DataFrame) -> Generator[None, None, None]:
+        """Register df as a temporary view; unregister on exit."""
+        self._con.register(name, df)
+        try:
+            yield
+        finally:
+            self._con.unregister(name)
+
+    @contextmanager
     def _transaction(self) -> Generator[None, None, None]:
         self._con.begin()
         try:

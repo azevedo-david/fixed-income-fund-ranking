@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import replace as _replace
 from datetime import date
 
@@ -24,6 +25,30 @@ from .compute.risk import max_drawdown, volatility_and_sharpe
 from .compute.tax import apply_ir, net_series
 
 logger = logging.getLogger(__name__)
+
+_META_COLS = [
+    "fund_cnpj",
+    "subclass_id",
+    "fund_name",
+    "target_investor",
+    "target_taxation",
+    "redemption_days",
+    "min_investment",
+]
+
+_DAILY_RETURNS_SQL = """
+    WITH with_returns AS (
+        SELECT cnpj, subclass_id, date, nav,
+               nav / NULLIF(LAG(nav) OVER (
+                   PARTITION BY cnpj, subclass_id ORDER BY date
+               ), 0) - 1 AS return_daily
+        FROM _quotes
+    )
+    SELECT cnpj, subclass_id, date, return_daily, nav
+    FROM with_returns
+    WHERE return_daily IS NOT NULL
+    ORDER BY cnpj, subclass_id, date
+"""
 
 
 def span_days(ri: pd.DataFrame) -> pd.DataFrame:
@@ -114,7 +139,7 @@ def _apply_tax_layer(
     ir_rate = df["target_taxation"].map(rates_dict)
     unresolved = ir_rate.isna()
     if unresolved.any() and exempt_kws:
-        pattern = "|".join(exempt_kws)
+        pattern = "|".join(re.escape(kw) for kw in exempt_kws)
         is_exempt = (
             df.loc[unresolved, "fund_name"]
             .fillna("")
@@ -136,26 +161,16 @@ def _apply_tax_layer(
     return df
 
 
-def build_metrics(
+def _load_universe_quotes(
     db: DuckDBWarehouse,
     universe_df: pd.DataFrame,
+    quotes_start: date,
     reference_date: date,
-    settings: Settings,
 ) -> pd.DataFrame:
-    """Build metrics DataFrame from staging.daily_quotes and staging.cdi_rates."""
-    settings = _replace(settings, reference_date=reference_date)
-
-    cdi_start = (
-        pd.Timestamp(reference_date)
-        - relativedelta(months=settings.max_window_months + 2)
-    ).date()
-
-    db._con.register(
-        "_metrics_universe",
-        universe_df[["fund_cnpj", "subclass_id"]].drop_duplicates(),
-    )
-    try:
-        quotes_df = db.execute(
+    """NAV history for the universe within [quotes_start, reference_date]."""
+    keys = universe_df[["fund_cnpj", "subclass_id"]].drop_duplicates()
+    with db.temp_view("_metrics_universe", keys):
+        return db.execute(
             """
             SELECT dq.fund_cnpj AS cnpj, dq.subclass_id, dq.date, dq.nav
             FROM staging.daily_quotes dq
@@ -164,95 +179,86 @@ def build_metrics(
                AND dq.subclass_id IS NOT DISTINCT FROM u.subclass_id
             WHERE dq.date >= ? AND dq.date <= ?
             """,
-            [settings.quotes_start, reference_date],
+            [quotes_start, reference_date],
         ).df()
-    finally:
-        db._con.unregister("_metrics_universe")
 
-    if quotes_df.empty:
-        logger.warning("metrics: no quotes found for universe on %s", reference_date)
-        return pd.DataFrame(columns=["fund_cnpj", "subclass_id", "reference_date"])
 
-    cdi_df = db.execute(
+def _load_cdi_series(db: DuckDBWarehouse, start: date, end: date) -> pd.Series:
+    """CDI daily rates as a DatetimeIndex Series named cdi_daily."""
+    df = db.execute(
         "SELECT date, rate FROM staging.cdi_rates WHERE date >= ? AND date <= ? ORDER BY date",
-        [cdi_start, reference_date],
+        [start, end],
     ).df()
-    if cdi_df.empty:
-        logger.warning("metrics: no CDI data found for %s", reference_date)
-        return pd.DataFrame(columns=["fund_cnpj", "subclass_id", "reference_date"])
-
-    cdi = pd.Series(
-        cdi_df["rate"].values,
-        index=pd.to_datetime(cdi_df["date"]).rename("date"),
+    return pd.Series(
+        df["rate"].values,
+        index=pd.to_datetime(df["date"]).rename("date"),
         name="cdi_daily",
     )
 
-    clean_quotes = (
-        quotes_df[quotes_df["nav"].notna()].sort_values(GROUP_KEY + ["date"]).copy()
+
+def _compute_daily_returns(
+    db: DuckDBWarehouse, quotes_df: pd.DataFrame
+) -> pd.DataFrame:
+    """Per-fund daily returns from raw NAVs via DuckDB window functions."""
+    clean = quotes_df[quotes_df["nav"].notna()].sort_values(GROUP_KEY + ["date"]).copy()
+    clean["subclass_id"] = clean["subclass_id"].astype(object)
+    with db.temp_view("_quotes", clean[GROUP_KEY + ["date", "nav"]]):
+        ri = db.execute(_DAILY_RETURNS_SQL).df()
+    ri["subclass_id"] = ri["subclass_id"].astype(object)
+    return ri
+
+
+def _attach_universe_metadata(
+    metrics: pd.DataFrame, universe_df: pd.DataFrame
+) -> pd.DataFrame:
+    """Left-join fund-level meta columns from the universe onto metrics."""
+    missing = [c for c in _META_COLS if c not in universe_df.columns]
+    if missing:
+        raise KeyError(f"metrics: missing universe columns: {missing}")
+    meta = (
+        universe_df[_META_COLS]
+        .drop_duplicates(subset=["fund_cnpj", "subclass_id"])
+        .copy()
     )
-    clean_quotes["subclass_id"] = clean_quotes["subclass_id"].astype(object)
+    meta["subclass_id"] = meta["subclass_id"].astype(object)
+    before = len(metrics)
+    out = metrics.merge(meta, on=["fund_cnpj", "subclass_id"], how="left")
+    if len(out) > before:
+        logger.warning(
+            "metrics: merge expanded rows (cartesian product). Before: %d, After: %d",
+            before,
+            len(out),
+        )
+    return out
 
-    db._con.register("_quotes", clean_quotes[GROUP_KEY + ["date", "nav"]])
-    try:
-        aligned = db.execute("""
-            WITH with_returns AS (
-                SELECT cnpj, subclass_id, date, nav,
-                       nav / NULLIF(LAG(nav) OVER (
-                           PARTITION BY cnpj, subclass_id ORDER BY date
-                       ), 0) - 1 AS return_daily
-                FROM _quotes
-            )
-            SELECT cnpj, subclass_id, date, return_daily, nav
-            FROM with_returns
-            WHERE return_daily IS NOT NULL
-            ORDER BY cnpj, subclass_id, date
-            """).df()
-    finally:
-        db._con.unregister("_quotes")
 
-    aligned["subclass_id"] = aligned["subclass_id"].astype(object)
-    ri = aligned
+def build_metrics(
+    db: DuckDBWarehouse,
+    universe_df: pd.DataFrame,
+    reference_date: date,
+    settings: Settings,
+) -> pd.DataFrame:
+    """Build metrics DataFrame from staging.daily_quotes and staging.cdi_rates."""
+    settings = _replace(settings, reference_date=reference_date)
+    ref = pd.Timestamp(reference_date)
+    cdi_start = (ref - relativedelta(months=settings.max_window_months + 2)).date()
+
+    quotes_df = _load_universe_quotes(
+        db, universe_df, settings.quotes_start, reference_date
+    )
+    cdi = _load_cdi_series(db, cdi_start, reference_date)
+    ri = _compute_daily_returns(db, quotes_df)
 
     metrics = compute_fund_metrics(ri, cdi, settings.windows, reference_date)
+    metrics = metrics.rename(columns={"cnpj": "fund_cnpj"})
     metrics["subclass_id"] = metrics["subclass_id"].astype(object)
 
-    ref = pd.Timestamp(reference_date)
     cdi_window = cdi_window_returns(cdi, ref, settings.windows)
     cdi_annual = _cdi_annualised(cdi, ref)
 
-    meta_cols = [
-        "fund_cnpj",
-        "subclass_id",
-        "fund_name",
-        "target_investor",
-        "target_taxation",
-        "redemption_days",
-        "min_investment",
-    ]
-    if not all(c in universe_df.columns for c in meta_cols):
-        missing = [c for c in meta_cols if c not in universe_df.columns]
-        raise KeyError(f"metrics: missing universe columns: {missing}")
-
-    meta = (
-        universe_df[meta_cols]
-        .copy()
-        .assign(cnpj=lambda x: x["fund_cnpj"])
-        .drop(columns=["fund_cnpj"])
-        .drop_duplicates(subset=["cnpj", "subclass_id"])
-    )
-    meta["subclass_id"] = meta["subclass_id"].astype(object)
-    before_merge = len(metrics)
-    df = metrics.merge(meta, on=GROUP_KEY, how="left")
-    if len(df) > before_merge:
-        logger.warning(
-            "metrics: merge expanded rows (cartesian product). Before: %d, After: %d",
-            before_merge,
-            len(df),
-        )
-
+    df = _attach_universe_metadata(metrics, universe_df)
     df = _apply_tax_layer(df, cdi_window, cdi_annual, settings)
     df["investor_level"] = map_investor_level(df["target_investor"])
-    df = df.rename(columns={"cnpj": "fund_cnpj"})
     df["reference_date"] = reference_date
     logger.info("metrics: %d rows computed for %s", len(df), reference_date)
     return df
