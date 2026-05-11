@@ -115,8 +115,9 @@ def fund_header(fund_cnpj: str, subclass_id: str | None, ref_date: date) -> dict
             u.adm_fee, u.has_perf_fee, u.redemption_days, u.min_investment,
             u.median_aum, u.median_holders, u.inception_date, u.share_class,
             u.fund_structure,
-            m.return_12m_net, m.alpha_12m_net, m.sharpe_excess, m.volatility,
-            m.max_drawdown, m.pct_months_above_cdi, m.return_annualized_net,
+            m.return_12m_net, m.alpha_12m_net, m.alpha_6m_net, m.alpha_3m_net,
+            m.sharpe_excess, m.volatility, m.max_drawdown,
+            m.pct_months_above_cdi, m.return_annualized_net,
             m.ir_rate, m.span_days
         FROM marts.universe u
         LEFT JOIN marts.metrics m
