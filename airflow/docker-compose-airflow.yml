@@ -1,0 +1,72 @@
+# Apache Airflow — Local Development Setup
+#
+# Uses LocalExecutor (single machine, no message broker needed).
+#
+# Services:
+#   - postgres:           Airflow metadata database
+#   - airflow-init:       one-time DB migration + admin user creation
+#   - airflow-webserver:  UI at http://localhost:8080
+#   - airflow-scheduler:  monitors DAGs and triggers tasks
+#
+# Usage:
+#   docker compose -f airflow/docker-compose-airflow.yml up -d
+
+x-airflow-common: &airflow-common
+  build: .
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__FERNET_KEY: ''
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    PYTHONPATH: /opt/app
+    AIRFLOW_VAR_DUCKDB_PATH: /opt/app/data/fund_ranking.duckdb
+    AIRFLOW_VAR_CONFIG_YAML_PATH: /opt/app/config.yaml
+  volumes:
+    - ../:/opt/app                  # project root → DAG can import from src.*
+    - ./dags:/opt/airflow/dags      # DAG files picked up by scheduler
+    - airflow_logs:/opt/airflow/logs
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  airflow-init:
+    <<: *airflow-common
+    command: bash -c "airflow db migrate && airflow users create --username airflow --password airflow --firstname Admin --lastname User --role Admin --email admin@example.com"
+    restart: "no"
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  airflow_logs:

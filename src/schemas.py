@@ -1,0 +1,354 @@
+"""DDL constants for every DuckDB table; DuckDBWarehouse executes these on init so schemas are enforced, not inferred."""
+
+RAW_REGISTRO_CLASSE = """\
+CREATE TABLE IF NOT EXISTS raw.registro_classe (
+    ID_Registro_Fundo                        BIGINT,
+    ID_Registro_Classe                       BIGINT,
+    CNPJ_Classe                              VARCHAR NOT NULL,
+    Codigo_CVM                               BIGINT,
+    Data_Registro                            DATE,
+    Data_Constituicao                        DATE,
+    Data_Inicio                              DATE,
+    Tipo_Classe                              VARCHAR,
+    Denominacao_Social                       VARCHAR,
+    Situacao                                 VARCHAR,
+    Data_Inicio_Situacao                     DATE,
+    Classificacao                            VARCHAR,
+    Indicador_Desempenho                     VARCHAR,
+    Classe_Cotas                             VARCHAR,
+    Classificacao_Anbima                     VARCHAR,
+    Tributacao_Longo_Prazo                   VARCHAR,
+    Entidade_Investimento                    VARCHAR,
+    Permitido_Aplicacao_CemPorCento_Exterior VARCHAR,
+    Classe_ESG                               VARCHAR,
+    Forma_Condominio                         VARCHAR,
+    Exclusivo                                VARCHAR,
+    Publico_Alvo                             VARCHAR,
+    Patrimonio_Liquido                       DOUBLE,
+    Data_Patrimonio_Liquido                  DATE,
+    CNPJ_Auditor                             DOUBLE,
+    Auditor                                  VARCHAR,
+    CNPJ_Custodiante                         DOUBLE,
+    Custodiante                              VARCHAR,
+    CNPJ_Controlador                         DOUBLE,
+    Controlador                              VARCHAR,
+    reference_date                           DATE        NOT NULL,
+    created_at                               TIMESTAMPTZ DEFAULT current_timestamp
+)"""
+
+RAW_REGISTRO_SUBCLASSE = """\
+CREATE TABLE IF NOT EXISTS raw.registro_subclasse (
+    ID_Registro_Classe                  BIGINT,
+    ID_Subclasse                        VARCHAR,
+    Codigo_CVM                          DOUBLE,
+    Data_Constituicao                   DATE,
+    Data_Inicio                         DATE,
+    Denominacao_Social                  VARCHAR,
+    Situacao                            VARCHAR,
+    Data_Inicio_Situacao                DATE,
+    Forma_Condominio                    VARCHAR,
+    Exclusivo                           VARCHAR,
+    Publico_Alvo                        VARCHAR,
+    Previdenciario                      VARCHAR,
+    Exclusivo_INR                       VARCHAR,
+    Exclusivo_Previdencia_Complementar  VARCHAR,
+    reference_date                      DATE        NOT NULL,
+    created_at                          TIMESTAMPTZ DEFAULT current_timestamp
+)"""
+
+RAW_INF_DIARIO = """\
+CREATE TABLE IF NOT EXISTS raw.inf_diario (
+    TP_FUNDO_CLASSE   VARCHAR,
+    CNPJ_FUNDO_CLASSE VARCHAR NOT NULL,
+    ID_SUBCLASSE      VARCHAR,
+    DT_COMPTC         DATE    NOT NULL,
+    VL_QUOTA          DOUBLE,
+    VL_PATRIM_LIQ     DOUBLE,
+    CAPTC_DIA         DOUBLE,
+    RESG_DIA          DOUBLE,
+    NR_COTST          INTEGER,
+    created_at        TIMESTAMPTZ DEFAULT current_timestamp,
+    updated_at        TIMESTAMPTZ DEFAULT current_timestamp
+)"""
+
+RAW_CAD_FI_HIST_TAXA_ADM = """\
+CREATE TABLE IF NOT EXISTS raw.cad_fi_hist_taxa_adm (
+    CNPJ_FUNDO        VARCHAR NOT NULL,
+    DT_REG            DATE,
+    TAXA_ADM          DOUBLE,
+    INF_TAXA_ADM      VARCHAR,
+    DT_INI_TAXA_ADM   DATE,
+    reference_date    DATE        NOT NULL,
+    created_at        TIMESTAMPTZ DEFAULT current_timestamp
+)"""
+
+RAW_CAD_FI_HIST_TAXA_PERFM = """\
+CREATE TABLE IF NOT EXISTS raw.cad_fi_hist_taxa_perfm (
+    CNPJ_FUNDO          VARCHAR NOT NULL,
+    DT_REG              DATE,
+    VL_TAXA_PERFM       DOUBLE,
+    DS_TAXA_PERFM       VARCHAR,
+    DT_INI_TAXA_PERFM   DATE,
+    reference_date      DATE        NOT NULL,
+    created_at          TIMESTAMPTZ DEFAULT current_timestamp
+)"""
+
+RAW_EXTRATO_FI = """\
+CREATE TABLE IF NOT EXISTS raw.extrato_fi (
+    CNPJ_FUNDO_CLASSE   VARCHAR NOT NULL,
+    DT_COMPTC           DATE,
+    TAXA_ADM            DOUBLE,
+    EXISTE_TAXA_PERFM   VARCHAR,
+    reference_date      DATE        NOT NULL,
+    created_at          TIMESTAMPTZ DEFAULT current_timestamp
+)"""
+
+RAW_ANBIMA_CARACTERISTICAS = """\
+CREATE TABLE IF NOT EXISTS raw.anbima_caracteristicas (
+    Cnpj_Da_Classe                   VARCHAR NOT NULL,
+    Codigo_Anbima                    VARCHAR,
+    Estrutura                        VARCHAR,
+    Nome_Comercial                   VARCHAR,
+    Categoria_Anbima                 VARCHAR,
+    Tipo_Anbima                      VARCHAR,
+    Nivel_1_Categoria                VARCHAR,
+    Nivel_2_Categoria                VARCHAR,
+    Nivel_3_Subcategoria             VARCHAR,
+    Foco_Atuacao                     VARCHAR,
+    Composicao_Do_Fundo              VARCHAR,
+    Aberto_Estatutariamente          VARCHAR,
+    Fundo_Esg                        VARCHAR,
+    Tributacao_Alvo                  VARCHAR,
+    Administrador                    VARCHAR,
+    Gestor_Principal                 VARCHAR,
+    Tipo_De_Investidor               VARCHAR,
+    Caracteristica_Do_Investidor     VARCHAR,
+    Aplicacao_Inicial_Minima         DOUBLE,
+    Cota_De_Abertura                 VARCHAR,
+    Prazo_Pagamento_Resgate_Em_Dias  INTEGER,
+    Codigo_Cvm_Subclasse             VARCHAR,
+    reference_date                   DATE        NOT NULL,
+    created_at                       TIMESTAMPTZ DEFAULT current_timestamp
+)"""
+
+RAW_CDI_DAILY = """\
+CREATE TABLE IF NOT EXISTS raw.cdi_daily (
+    date       DATE        NOT NULL,
+    rate       DOUBLE      NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT current_timestamp,
+    updated_at TIMESTAMPTZ DEFAULT current_timestamp
+)"""
+
+RAW_PIPELINE_RUNS = """\
+CREATE TABLE IF NOT EXISTS raw.pipeline_runs (
+    reference_date  DATE        NOT NULL,
+    task            VARCHAR     NOT NULL,
+    started_at      TIMESTAMPTZ,
+    completed_at    TIMESTAMPTZ,
+    status          VARCHAR,
+    rows_written    BIGINT,
+    notes           VARCHAR,
+    PRIMARY KEY (reference_date, task)
+)"""
+
+STAGING_REGISTRY = """\
+CREATE TABLE IF NOT EXISTS staging.registry (
+    fund_cnpj        VARCHAR NOT NULL,
+    subclass_id      VARCHAR,
+    fund_name        VARCHAR,
+    inception_date   DATE,
+    status           VARCHAR,
+    anbima_category  VARCHAR,
+    target_investor  VARCHAR,
+    share_class      VARCHAR,
+    fund_structure   VARCHAR,
+    is_exclusive     VARCHAR,
+    is_pension       VARCHAR,
+    reference_date   DATE        NOT NULL,
+    updated_at       TIMESTAMPTZ DEFAULT current_timestamp
+)"""
+
+STAGING_DAILY_QUOTES = """\
+CREATE TABLE IF NOT EXISTS staging.daily_quotes (
+    fund_cnpj    VARCHAR NOT NULL,
+    subclass_id  VARCHAR,
+    date         DATE        NOT NULL,
+    nav          DOUBLE,
+    aum          DOUBLE,
+    inflows      DOUBLE,
+    outflows     DOUBLE,
+    shareholders INTEGER,
+    created_at   TIMESTAMPTZ DEFAULT current_timestamp,
+    updated_at   TIMESTAMPTZ DEFAULT current_timestamp
+)"""
+
+STAGING_FEES = """\
+CREATE TABLE IF NOT EXISTS staging.fees (
+    fund_cnpj      VARCHAR NOT NULL,
+    adm_fee        DOUBLE,
+    adm_fee_date   DATE,
+    perf_fee       DOUBLE,
+    perf_fee_desc  VARCHAR,
+    perf_fee_date  DATE,
+    has_perf_fee   BOOLEAN,
+    reference_date DATE        NOT NULL,
+    updated_at     TIMESTAMPTZ DEFAULT current_timestamp
+)"""
+
+STAGING_CDI_RATES = """\
+CREATE TABLE IF NOT EXISTS staging.cdi_rates (
+    date       DATE        NOT NULL,
+    rate       DOUBLE      NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT current_timestamp,
+    updated_at TIMESTAMPTZ DEFAULT current_timestamp
+)"""
+
+STAGING_ANBIMA = """\
+CREATE TABLE IF NOT EXISTS staging.anbima (
+    fund_cnpj              VARCHAR NOT NULL,
+    subclass_id            VARCHAR,
+    anbima_code            VARCHAR,
+    structure              VARCHAR,
+    commercial_name        VARCHAR,
+    category               VARCHAR,
+    type                   VARCHAR,
+    level_1                VARCHAR,
+    level_2                VARCHAR,
+    level_3                VARCHAR,
+    focus                  VARCHAR,
+    composition            VARCHAR,
+    open_to_public         VARCHAR,
+    is_esg                 VARCHAR,
+    target_taxation        VARCHAR,
+    administrator          VARCHAR,
+    lead_manager           VARCHAR,
+    investor_type          VARCHAR,
+    investor_profile       VARCHAR,
+    min_initial_investment DOUBLE,
+    open_nav_quota         VARCHAR,
+    redemption_days        INTEGER,
+    reference_date         DATE        NOT NULL,
+    updated_at             TIMESTAMPTZ DEFAULT current_timestamp
+)"""
+
+MARTS_UNIVERSE = """\
+CREATE TABLE IF NOT EXISTS marts.universe (
+    fund_cnpj              VARCHAR NOT NULL,
+    subclass_id            VARCHAR,
+    fund_name              VARCHAR,
+    inception_date         DATE,
+    anbima_category        VARCHAR,
+    target_investor        VARCHAR,
+    share_class            VARCHAR,
+    fund_structure         VARCHAR,
+    adm_fee                DOUBLE,
+    has_perf_fee           BOOLEAN,
+    median_aum             DOUBLE,
+    median_holders         DOUBLE,
+    target_taxation        VARCHAR,
+    redemption_days        INTEGER,
+    min_investment         DOUBLE,
+    reference_date         DATE    NOT NULL
+)"""
+
+MARTS_METRICS = """\
+CREATE TABLE IF NOT EXISTS marts.metrics (
+    fund_cnpj              VARCHAR NOT NULL,
+    subclass_id            VARCHAR,
+    fund_name              VARCHAR,
+    target_investor        VARCHAR,
+    target_taxation        VARCHAR,
+    redemption_days        INTEGER,
+    min_investment         DOUBLE,
+    return_1m              DOUBLE,
+    return_3m              DOUBLE,
+    return_6m              DOUBLE,
+    return_12m             DOUBLE,
+    return_24m             DOUBLE,
+    return_36m             DOUBLE,
+    annualized_return      DOUBLE,
+    return_1m_net          DOUBLE,
+    return_3m_net          DOUBLE,
+    return_6m_net          DOUBLE,
+    return_12m_net         DOUBLE,
+    return_24m_net         DOUBLE,
+    return_36m_net         DOUBLE,
+    return_annualized_net  DOUBLE,
+    alpha_1m_net           DOUBLE,
+    alpha_3m_net           DOUBLE,
+    alpha_6m_net           DOUBLE,
+    alpha_12m_net          DOUBLE,
+    alpha_24m_net          DOUBLE,
+    alpha_36m_net          DOUBLE,
+    alpha_annualized_net   DOUBLE,
+    pct_months_above_cdi   DOUBLE,
+    volatility             DOUBLE,
+    sharpe_excess          DOUBLE,
+    max_drawdown           DOUBLE,
+    span_days              INTEGER,
+    ir_rate                DOUBLE,
+    investor_level         INTEGER,
+    reference_date         DATE    NOT NULL
+)"""
+
+MARTS_RANKINGS = """\
+CREATE TABLE IF NOT EXISTS marts.rankings (
+    fund_cnpj              VARCHAR NOT NULL,
+    subclass_id            VARCHAR,
+    fund_name              VARCHAR,
+    purpose                VARCHAR NOT NULL,
+    profile                VARCHAR NOT NULL,
+    investor_type          VARCHAR NOT NULL,
+    rank                   INTEGER NOT NULL,
+    score                  DOUBLE,
+    investor_level         INTEGER,
+    ir_rate                DOUBLE,
+    alpha_12m_net          DOUBLE,
+    alpha_3m_net           DOUBLE,
+    alpha_6m_net           DOUBLE,
+    return_annualized_net  DOUBLE,
+    return_12m_net         DOUBLE,
+    sharpe_excess          DOUBLE,
+    pct_months_above_cdi   DOUBLE,
+    max_drawdown           DOUBLE,
+    volatility             DOUBLE,
+    span_days              INTEGER,
+    redemption_days        INTEGER,
+    min_investment         DOUBLE,
+    reference_date         DATE    NOT NULL
+)"""
+
+VALIDATION_LOG = """\
+CREATE TABLE IF NOT EXISTS logs.validation_log (
+    reference_date  DATE        NOT NULL,
+    task            VARCHAR     NOT NULL,
+    dataset         VARCHAR     NOT NULL,
+    check_name      VARCHAR     NOT NULL,
+    severity        VARCHAR     NOT NULL,
+    passed          BOOLEAN     NOT NULL,
+    value           VARCHAR,
+    threshold       VARCHAR,
+    message         VARCHAR,
+    logged_at       TIMESTAMPTZ DEFAULT current_timestamp
+)"""
+
+ALL_DDLS: list[str] = [
+    RAW_REGISTRO_CLASSE,
+    RAW_REGISTRO_SUBCLASSE,
+    RAW_INF_DIARIO,
+    RAW_CAD_FI_HIST_TAXA_ADM,
+    RAW_CAD_FI_HIST_TAXA_PERFM,
+    RAW_EXTRATO_FI,
+    RAW_ANBIMA_CARACTERISTICAS,
+    RAW_CDI_DAILY,
+    RAW_PIPELINE_RUNS,
+    STAGING_REGISTRY,
+    STAGING_DAILY_QUOTES,
+    STAGING_FEES,
+    STAGING_CDI_RATES,
+    STAGING_ANBIMA,
+    MARTS_UNIVERSE,
+    MARTS_METRICS,
+    MARTS_RANKINGS,
+    VALIDATION_LOG,
+]

@@ -12,6 +12,7 @@ data/
 
 # Generated pipeline outputs
 output/
+_output/
 logs/
 
 # Private files
@@ -19,3 +20,4 @@ logs/
 *.ipynb
 *notes.md
 *.pdf
+CLAUDE.md
