@@ -61,11 +61,15 @@ def main() -> None:
     )
 
     from src.storage import DuckDBWarehouse
+    from src.ingestion.ingest import ingest_raw
+    from src.staging.stage import stage_all
     from src.marts.mart import mart_all
     from src.publish.report import write_report
     from src.publish.publish import write_json, write_parquet
 
     with DuckDBWarehouse(str(settings.db_path)) as db:
+        ingest_raw(db, force=force, history_start=settings.history_start)
+        stage_all(db, force=force)
         mart_all(db, settings.reference_date, settings, force=force)
         write_report(db, settings.reference_date, settings)
         write_json(db, settings.reference_date, settings)

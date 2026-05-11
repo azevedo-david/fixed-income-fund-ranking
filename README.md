@@ -60,8 +60,9 @@ The pipeline uses one public ANBIMA file that must be placed in `data/raw/anbima
 | `FUNDOS-175-CARACTERISTICAS-PUBLICO.xlsx` | [data.anbima.com.br](https://data.anbima.com.br/datasets/fundos-175-caracteristicas-publico/detalhes) → Datasets → Fundos 175 Características → Download |
 
 This file is not auto-fetched because the ANBIMA public portal requires a browser
-session. Once placed, the pipeline caches it as Parquet and re-reads from cache on
-every subsequent run.
+session. Once placed, the pipeline reads it on every run and stages the data into
+DuckDB. It also checks that the file is no older than 15 days and raises an error
+if it is stale.
 
 ### Install and run
 
