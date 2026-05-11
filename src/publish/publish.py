@@ -138,8 +138,12 @@ def write_json(
     reference_date: date,
     settings: Settings,
 ) -> None:
-    """Write ranking.json to settings.output.ranking_json."""
-    settings = _replace(settings, reference_date=reference_date)
+    """Write ranking.json to settings.output.ranking_json (stamped with reference_date)."""
+    settings = _replace(
+        settings,
+        reference_date=reference_date,
+        output=settings.output.with_date(reference_date),
+    )
     rankings = load_rankings(db, reference_date, settings)
     n_funds = universe_size(db, reference_date)
     payload = build_payload(rankings, n_funds, settings)
@@ -152,11 +156,11 @@ def write_parquet(
     reference_date: date,
     settings: Settings,
 ) -> None:
-    """Write metrics.parquet to settings.output.metrics_parquet."""
+    """Write metrics.parquet to settings.output.metrics_parquet (stamped with reference_date)."""
     metrics_df = db.execute(
         "SELECT * FROM marts.metrics WHERE reference_date = ?", [reference_date]
     ).df()
-    path = settings.output.metrics_parquet
+    path = settings.output.with_date(reference_date).metrics_parquet
     path.parent.mkdir(parents=True, exist_ok=True)
     metrics_df.to_parquet(path, index=False)
     logger.info(

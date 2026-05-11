@@ -80,6 +80,18 @@ class OutputConfig:
     ranking_json: Path
     metrics_parquet: Path
 
+    def with_date(self, ref_date: date) -> "OutputConfig":
+        """Return a copy with ``ref_date`` stamped into each filename."""
+        return OutputConfig(
+            ranking_md=_stamp_date(self.ranking_md, ref_date),
+            ranking_json=_stamp_date(self.ranking_json, ref_date),
+            metrics_parquet=_stamp_date(self.metrics_parquet, ref_date),
+        )
+
+
+def _stamp_date(path: Path, ref_date: date) -> Path:
+    return path.with_name(f"{path.stem}_{ref_date.isoformat()}{path.suffix}")
+
 
 @dataclass(frozen=True)
 class Settings:
