@@ -32,104 +32,26 @@ findings before the next layer starts.
 
 ## Airflow DAGs
 
-The pipeline runs as four chained Airflow DAGs. Each DAG opens its own DuckDB
-connection (DuckDB allows one writer at a time, so tasks within a DAG are sequential).
+Four chained DAGs run sequentially (DuckDB allows one writer at a time). Each triggers the next on success.
 
-### `fund_ranking_ingest` — weekly, Mon 6:00 UTC
+| DAG | Schedule | Tasks |
+|-----|----------|-------|
+| `fund_ranking_ingest` | Mon 6:00 UTC | `registro` → `inf_diario` → `cad_fi_hist` → `extrato` → `cdi` → `anbima` → `cleanup` → `validate_ingestion` |
+| `fund_ranking_stage` | triggered | `registry` → `fees` → `daily_quotes` → `cdi_rates` → `anbima` → `validate_staging` |
+| `fund_ranking_marts` | triggered | `universe` → `metrics` → `rankings` → `validate_marts` |
+| `fund_ranking_publish` | triggered | `report` → `publish` |
 
-Downloads all raw sources into `raw.*` tables, then validates and triggers staging.
-
-| Task | What it does |
-|------|--------------|
-| `registro` | CVM fund/class registry snapshot → `raw.registro_classe`, `raw.registro_subclasse` |
-| `inf_diario` | CVM daily NAV/AuM/shareholders files back to `history_start` → `raw.inf_diario` |
-| `cad_fi_hist` | CVM historical admin and performance fee tables → `raw.cad_fi_hist_taxa_adm/perfm` |
-| `extrato` | CVM current-year extrato (fee fallback) → `raw.extrato_fi` |
-| `cdi` | BCB SGS daily CDI series → `raw.cdi_daily` |
-| `anbima` | ANBIMA characteristics xlsx → `raw.anbima_caracteristicas` |
-| `cleanup` | Deletes downloaded files from `data/raw/cvm/` after all sources are in DuckDB |
-| `validate_ingestion` | Row counts, freshness, null rates, known-value checks on all `raw.*` tables |
-| `trigger_staging` | Triggers `fund_ranking_stage` |
-
-All ingest tasks are idempotent: same-day re-runs skip sources already loaded today
-unless `force=True` is passed as a DAG param.
-
-### `fund_ranking_stage` — triggered by ingest
-
-Cleans and normalises each raw source into typed `staging.*` tables.
-
-| Task | What it does |
-|------|--------------|
-| `registry` | Joins class + subclass, coerces types, formats CNPJ → `staging.registry` |
-| `fees` | Merges `cad_fi_hist` (primary) + `extrato` (fallback), converts bps → % → `staging.fees` |
-| `daily_quotes` | Deduplicates, renames columns, processes month-by-month → `staging.daily_quotes` |
-| `cdi_rates` | Normalises BCB CDI series → `staging.cdi_rates` |
-| `anbima` | Renames columns, maps investor type and taxation fields → `staging.anbima` |
-| `validate_staging` | PK uniqueness, null rates, window coverage, outlier checks on all `staging.*` tables |
-| `trigger_marts` | Triggers `fund_ranking_marts` |
-
-Staging tasks skip if their target table already reflects the latest raw snapshot.
-
-### `fund_ranking_marts` — triggered by staging
-
-Computes the eligible universe, metrics, and rankings for the reference date.
-
-| Task | What it does |
-|------|--------------|
-| `universe` | Applies eligibility filters (status, category, AuM, holders, span, freshness) → `marts.universe` |
-| `metrics` | Trailing returns, alpha vs CDI, Sharpe, drawdown, volatility, CAGR, IR net layer → `marts.metrics` |
-| `rankings` | Percentile scores, purpose × profile weight vectors, investor-type access filter → `marts.rankings` |
-| `validate_marts` | Universe size, metric bounds, IR rate range, score validity, combo coverage checks |
-| `trigger_publish` | Triggers `fund_ranking_publish` with the resolved `reference_date` |
-
-Accepts a `reference_date` param (ISO date string); defaults to today. Each task is
-idempotent via `upsert_derived`: the existing snapshot for the date is deleted and
-rewritten.
-
-### `fund_ranking_publish` — triggered by marts
-
-Writes output files from the `marts.*` tables.
-
-| Task | What it does |
-|------|--------------|
-| `report` | Renders `output/ranking.md` — methodology section + top-N tables per segment |
-| `publish` | Writes `output/ranking.json` (typed data contract) and `output/metrics.parquet` |
+All tasks are idempotent. Ingest tasks skip sources already loaded today unless `force=True`. Mart tasks delete and rewrite the snapshot for the given `reference_date`. The marts DAG accepts a `reference_date` param (ISO string); defaults to today.
 
 ## Validation gates
 
-Every layer boundary has a validation step. Results are always written to
-`logs.validation_log`; error-severity failures raise an exception and halt the DAG.
+Each layer boundary has a validation step that writes results to `logs.validation_log` and halts the DAG on error-severity failures.
 
-### validate_ingestion (raw layer)
-
-| Table | Checks |
-|-------|--------|
-| `raw.inf_diario` | Row count, date freshness, NAV/AuM/shareholders null rates |
-| `raw.cdi_daily` | Row count, date freshness, no negative rates, rate in daily-decimal range |
-| `raw.registro_classe` | Snapshot exists, row count, CNPJ format, known `Situacao`/`Exclusivo`/`Forma_Condominio` values, Renda Fixa coverage ≥ 1000, inception date null rate |
-| `raw.registro_subclasse` | Snapshot exists, row count, referential integrity vs classe ≥ 95%, known `Previdenciario` values |
-| `raw.cad_fi_hist_taxa_adm` | Snapshot exists, row count, no ambiguous fee values (5–20 range) |
-| `raw.cad_fi_hist_taxa_perfm` | Snapshot exists, row count |
-| `raw.extrato_fi` | Snapshot exists, row count, known `EXISTE_TAXA_PERFM` values |
-| `raw.anbima_caracteristicas` | Snapshot exists, row count, required columns present, known `Estrutura`/`Tributacao_Alvo` values |
-
-### validate_staging (staging layer)
-
-| Table | Checks |
-|-------|--------|
-| `staging.registry` | Snapshot exists, row count, freshness ≤ 14 days, no null `fund_cnpj`, PK unique, inception date null rate |
-| `staging.daily_quotes` | Row count, date freshness, no null `fund_cnpj`, PK unique, window coverage, NAV/AuM/shareholders null rates and outliers |
-| `staging.fees` | Snapshot exists, row count, freshness ≤ 14 days, no null `fund_cnpj`, PK unique, no negative `adm_fee` |
-| `staging.cdi_rates` | Row count, date freshness, window coverage, no negative rates, no gaps > 10 days |
-| `staging.anbima` | Snapshot exists, row count, freshness ≤ 14 days, no null `fund_cnpj`, PK unique, `redemption_days` null rate |
-
-### validate_marts (marts layer)
-
-| Table | Checks |
-|-------|--------|
-| `marts.universe` | Snapshot exists, row count, no null `fund_cnpj`, PK unique, ANBIMA enrichment null rates (`target_taxation`, `redemption_days`, `min_investment`) |
-| `marts.metrics` | Snapshot exists, row count ≥ 50 distinct funds, no null `fund_cnpj`, PK unique, `ir_rate` in [0, 1], `investor_level` in {0, 1, 2}, no negative volatility, max drawdown ≤ 0, `pct_months_above_cdi` in [0, 1], 12m return bounds, |alpha_12m| ≤ 30pp, volatility ≤ 500%, |Sharpe| ≤ 100 |
-| `marts.rankings` | Snapshot exists, row count, PK unique, score in [0, 1], all configured purpose × profile × investor_type combos present |
+| Gate | Layer | What is checked |
+|------|-------|-----------------|
+| `validate_ingestion` | raw | Row counts and freshness for all 8 raw tables; null rates on NAV, AuM, shareholders; no negative CDI; known categorical values; CNPJ format; ANBIMA required columns present |
+| `validate_staging` | staging | PK uniqueness and null `fund_cnpj` for all 5 staging tables; trailing-window coverage for quotes and CDI; NAV/AuM/shareholders outliers; no gaps > 10 days in CDI; no negative fees |
+| `validate_marts` | marts | Universe size ≥ 50 funds; metric bounds (no negative vol, drawdown ≤ 0, Sharpe ≤ 100, return in range); `ir_rate` and `investor_level` validity; score in [0, 1]; all configured ranking combos present |
 
 ## Setup
 
