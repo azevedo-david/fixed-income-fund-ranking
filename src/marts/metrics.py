@@ -74,7 +74,7 @@ def compute_fund_metrics(
 
     Output: flat DataFrame with GROUP_KEY + all metric columns.
     """
-    trailing = trailing_returns(ri, windows)
+    trailing = trailing_returns(ri, windows, reference_date)
     cdi_w = cdi_window_returns(
         cdi_daily, reference_date=pd.Timestamp(reference_date), windows=windows
     )

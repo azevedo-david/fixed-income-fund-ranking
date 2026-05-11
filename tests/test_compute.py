@@ -99,22 +99,28 @@ def test_daily_returns_both_funds_present():
 # ---------------------------------------------------------------------------
 
 
+def _ref(ri: pd.DataFrame) -> date:
+    return ri["date"].max().date()
+
+
 def test_trailing_returns_columns():
     ri = _make_ri()
-    result = trailing_returns(ri, {"3m": 3, "12m": 12})
+    result = trailing_returns(ri, {"3m": 3, "12m": 12}, _ref(ri))
     assert {"return_3m", "return_12m"}.issubset(result.columns)
     assert set(result["cnpj"].unique()) == {CNPJ_A, CNPJ_B}
 
 
 def test_trailing_returns_nan_subclass_preserved():
-    result = trailing_returns(_make_ri(), {"12m": 12})
+    ri = _make_ri()
+    result = trailing_returns(ri, {"12m": 12}, _ref(ri))
     fund_a = result[result["cnpj"] == CNPJ_A]
     assert len(fund_a) == 1
     assert pd.isna(fund_a.iloc[0]["subclass_id"])
 
 
 def test_trailing_returns_positive_for_growing_nav():
-    result = trailing_returns(_make_ri(), {"12m": 12})
+    ri = _make_ri()
+    result = trailing_returns(ri, {"12m": 12}, _ref(ri))
     assert (result["return_12m"].dropna() > 0).all()
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import date
 
 import numpy as np
 import pandas as pd
@@ -10,7 +11,6 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 GROUP_KEY = ["cnpj", "subclass_id"]
-_SUB_SENTINEL = "__NS__"
 
 
 def daily_returns(df_clean: pd.DataFrame) -> pd.DataFrame:
@@ -33,55 +33,39 @@ def daily_returns(df_clean: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def _trailing_one_window(quotas: pd.DataFrame, label: str, months: int) -> pd.DataFrame:
-    """V_last / V_start − 1 per fund for a single trailing window.
-
-    Input/output: flat DataFrame with GROUP_KEY columns.
-    """
-    last_dates = quotas.groupby(GROUP_KEY, dropna=False)["date"].max()
-    cutoffs = last_dates - pd.DateOffset(months=months)
-
-    out = {}
-    for key, sub in quotas.groupby(GROUP_KEY, dropna=False):
-        dates = sub["date"]
-        cutoff = cutoffs.loc[key]
-        before = dates[dates <= cutoff]
-        if len(before) == 0:
-            out[key] = np.nan
-            continue
-        v_end = sub["nav"].iloc[-1]
-        v_start_vals = sub.loc[sub["date"] == before.max(), "nav"]
-        if v_start_vals.empty:
-            out[key] = np.nan
-            continue
-        v_start = v_start_vals.iloc[0]
-        if pd.isna(v_end) or pd.isna(v_start) or v_start == 0:
-            out[key] = np.nan
-        else:
-            out[key] = v_end / v_start - 1.0
-
-    s = pd.Series(out, name=f"return_{label}")
-    s.index.names = GROUP_KEY
-    return s.reset_index()
-
-
-def trailing_returns(ri: pd.DataFrame, windows: dict[str, int]) -> pd.DataFrame:
-    """Trailing point-to-point returns for each fund × window.
-
-    Output: flat DataFrame with GROUP_KEY + return_{label} columns.
-    """
-    quotas = ri[GROUP_KEY + ["nav", "date"]].sort_values(GROUP_KEY + ["date"]).copy()
-    quotas["subclass_id"] = quotas["subclass_id"].fillna(_SUB_SENTINEL)
-    result = None
-    for label, m in windows.items():
-        part = _trailing_one_window(quotas, label, m)
-        result = (
-            part if result is None else result.merge(part, on=GROUP_KEY, how="outer")
-        )
-    result["subclass_id"] = result["subclass_id"].mask(
-        result["subclass_id"] == _SUB_SENTINEL, np.nan
+def _nav_as_of(quotas: pd.DataFrame, cutoff: pd.Timestamp) -> pd.Series:
+    """Last NAV at or before cutoff per fund. quotas must be sorted by GROUP_KEY+date."""
+    return (
+        quotas[quotas["date"] <= cutoff].groupby(GROUP_KEY, dropna=False)["nav"].last()
     )
-    return result
+
+
+def trailing_returns(
+    ri: pd.DataFrame, windows: dict[str, int], reference_date: date
+) -> pd.DataFrame:
+    """Trailing point-to-point returns anchored at reference_date.
+
+    For each fund × window: v_end / v_start − 1, where v_end is the last
+    NAV at or before reference_date and v_start is the last NAV at or
+    before reference_date − months. NaN if either anchor has no quote.
+    """
+    quotas = ri[GROUP_KEY + ["nav", "date"]].sort_values(GROUP_KEY + ["date"])
+    ref_ts = pd.Timestamp(reference_date)
+    v_end = _nav_as_of(quotas, ref_ts).rename("v_end")
+
+    result = v_end.to_frame()
+    for label, months in windows.items():
+        cutoff = ref_ts - pd.DateOffset(months=months)
+        v_start = _nav_as_of(quotas, cutoff).rename("v_start")
+        result = result.join(v_start, how="left")
+        result[f"return_{label}"] = np.where(
+            result["v_start"].gt(0),
+            result["v_end"] / result["v_start"] - 1.0,
+            np.nan,
+        )
+        result = result.drop(columns=["v_start"])
+
+    return result.drop(columns=["v_end"]).reset_index()
 
 
 def cdi_window_returns(
