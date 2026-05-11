@@ -36,6 +36,58 @@ _META_COLS = [
     "min_investment",
 ]
 
+_NAN_NEUTRAL = ["alpha_24m_net", "alpha_36m_net"]
+_NAN_DEFAULTS = {"min_investment": 10_000.0, "redemption_days": 100.0}
+_NAN_REQUIRED = [
+    "alpha_3m_net",
+    "alpha_6m_net",
+    "alpha_12m_net",
+    "return_annualized_net",
+    "sharpe_excess",
+    "volatility",
+    "max_drawdown",
+    "pct_months_above_cdi",
+]
+
+
+def _handle_nans(df: pd.DataFrame) -> pd.DataFrame:
+    """Fill NaN scoring metrics with defensible defaults; drop funds still NaN in required features."""
+    for col in _NAN_NEUTRAL:
+        if col in df.columns:
+            n = int(df[col].isna().sum())
+            if n:
+                logger.info("metrics: setting %d NaN %s to 0.0", n, col)
+                df[col] = df[col].fillna(0.0)
+
+    for col, default in _NAN_DEFAULTS.items():
+        if col in df.columns:
+            n = int(df[col].isna().sum())
+            if n:
+                logger.info("metrics: filling %d NaN %s with %s", n, col, default)
+                df[col] = df[col].fillna(default)
+
+    required = [c for c in _NAN_REQUIRED if c in df.columns]
+    nan_mask = df[required].isna().any(axis=1)
+    if nan_mask.any():
+        breakdown = (
+            df.loc[nan_mask, required].isna().sum().loc[lambda s: s > 0].to_dict()
+        )
+        logger.warning(
+            "metrics: dropping %d funds with NaN in required features — %s",
+            int(nan_mask.sum()),
+            breakdown,
+        )
+        for _, row in df.loc[nan_mask, ["fund_cnpj", "subclass_id"]].iterrows():
+            logger.warning(
+                "metrics: dropped fund_cnpj=%s subclass_id=%s",
+                row["fund_cnpj"],
+                row["subclass_id"],
+            )
+        df = df.loc[~nan_mask].copy()
+
+    return df
+
+
 _DAILY_RETURNS_SQL = """
     WITH with_returns AS (
         SELECT cnpj, subclass_id, date, nav,
@@ -259,6 +311,7 @@ def build_metrics(
     df = _attach_universe_metadata(metrics, universe_df)
     df = _apply_tax_layer(df, cdi_window, cdi_annual, settings)
     df["investor_level"] = map_investor_level(df["target_investor"])
+    df = _handle_nans(df)
     df["reference_date"] = reference_date
     logger.info("metrics: %d rows computed for %s", len(df), reference_date)
     return df

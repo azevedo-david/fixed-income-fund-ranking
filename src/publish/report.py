@@ -226,8 +226,12 @@ def write_report(
     reference_date: date,
     settings: Settings,
 ) -> None:
-    """Write ranking.md to settings.output.ranking_md."""
-    settings = _replace(settings, reference_date=reference_date)
+    """Write ranking.md to settings.output.ranking_md (stamped with reference_date)."""
+    settings = _replace(
+        settings,
+        reference_date=reference_date,
+        output=settings.output.with_date(reference_date),
+    )
     rankings = load_rankings(db, reference_date, settings)
     n_funds = universe_size(db, reference_date)
     generate_report(rankings, n_funds, settings)

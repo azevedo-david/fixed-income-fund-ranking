@@ -18,10 +18,16 @@ with st.sidebar:
         ref_dates,
         format_func=lambda d: d.strftime("%Y-%m-%d"),
     )
+    logged_dates = data.validation_logged_dates(ref_date)
+    logged_date = st.selectbox(
+        "Logged date (optional)",
+        [None] + logged_dates,
+        format_func=lambda d: d.strftime("%Y-%m-%d") if d else "All",
+    )
     show_passing = st.checkbox("Show passing checks", value=False)
 
 # ── summary strip ─────────────────────────────────────────────────────────────
-summary = data.validation_summary(ref_date)
+summary = data.validation_summary(ref_date, logged_date)
 
 if summary.empty:
     st.info("No checks logged for this reference date.")
@@ -81,7 +87,7 @@ for _, row in summary.iterrows():
         f"{header_icon} {label} — {row['dataset']}",
         expanded=(errors + warnings) > 0,
     ):
-        detail = data.validation_detail(ref_date, task)
+        detail = data.validation_detail(ref_date, task, logged_date)
 
         if not show_passing:
             filtered = detail[~detail["passed"]]

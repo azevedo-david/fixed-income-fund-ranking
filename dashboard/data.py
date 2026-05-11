@@ -115,8 +115,9 @@ def fund_header(fund_cnpj: str, subclass_id: str | None, ref_date: date) -> dict
             u.adm_fee, u.has_perf_fee, u.redemption_days, u.min_investment,
             u.median_aum, u.median_holders, u.inception_date, u.share_class,
             u.fund_structure,
-            m.return_12m_net, m.alpha_12m_net, m.sharpe_excess, m.volatility,
-            m.max_drawdown, m.pct_months_above_cdi, m.return_annualized_net,
+            m.return_12m_net, m.alpha_12m_net, m.alpha_6m_net, m.alpha_3m_net,
+            m.sharpe_excess, m.volatility, m.max_drawdown,
+            m.pct_months_above_cdi, m.return_annualized_net,
             m.ir_rate, m.span_days
         FROM marts.universe u
         LEFT JOIN marts.metrics m
@@ -253,10 +254,24 @@ def validation_reference_dates() -> list[date]:
 
 
 @st.cache_data(ttl=60)
-def validation_summary(ref_date: date) -> pd.DataFrame:
+def validation_logged_dates(ref_date: date) -> list[date]:
+    df = _q(
+        "SELECT DISTINCT DATE(logged_at) FROM logs.validation_log WHERE reference_date = ? ORDER BY DATE(logged_at) DESC",
+        (ref_date,),
+    )
+    return df.iloc[:, 0].tolist()
+
+
+@st.cache_data(ttl=60)
+def validation_summary(ref_date: date, logged_date: date | None = None) -> pd.DataFrame:
     """One row per task with pass / fail / warn counts and last logged timestamp."""
+    where_clause = "WHERE reference_date = ?"
+    params = (ref_date,)
+    if logged_date:
+        where_clause += " AND DATE(logged_at) = ?"
+        params = (ref_date, logged_date)
     return _q(
-        """
+        f"""
         SELECT
             task,
             dataset,
@@ -269,25 +284,31 @@ def validation_summary(ref_date: date) -> pd.DataFrame:
                      THEN 1 ELSE 0 END)                           AS warnings,
             MAX(logged_at)                                        AS last_logged_at
         FROM logs.validation_log
-        WHERE reference_date = ?
+        {where_clause}
         GROUP BY task, dataset
         ORDER BY task
         """,
-        (ref_date,),
+        params,
     )
 
 
 @st.cache_data(ttl=60)
-def validation_detail(ref_date: date, task: str) -> pd.DataFrame:
+def validation_detail(
+    ref_date: date, task: str, logged_date: date | None = None
+) -> pd.DataFrame:
     """All checks for a given task, failures first."""
+    where_clause = "WHERE reference_date = ? AND task = ?"
+    params = (ref_date, task)
+    if logged_date:
+        where_clause += " AND DATE(logged_at) = ?"
+        params = (ref_date, task, logged_date)
     return _q(
-        """
+        f"""
         SELECT
             check_name, severity, passed, value, threshold, message, logged_at
         FROM logs.validation_log
-        WHERE reference_date = ?
-          AND task = ?
+        {where_clause}
         ORDER BY passed ASC, severity DESC, check_name
         """,
-        (ref_date, task),
+        params,
     )

@@ -77,7 +77,22 @@ scoring:
 
 rankings:
   - {purpose: cash,   profile: conservative, investor_type: retail}
+  - {purpose: cash,   profile: conservative, investor_type: qualified}
+  - {purpose: cash,   profile: conservative, investor_type: professional}
+  - {purpose: cash,   profile: balanced,     investor_type: retail}
+  - {purpose: cash,   profile: balanced,     investor_type: qualified}
+  - {purpose: cash,   profile: balanced,     investor_type: professional}
+  - {purpose: cash,   profile: aggressive,   investor_type: retail}
+  - {purpose: cash,   profile: aggressive,   investor_type: qualified}
+  - {purpose: cash,   profile: aggressive,   investor_type: professional}
+  - {purpose: income, profile: conservative, investor_type: retail}
+  - {purpose: income, profile: conservative, investor_type: qualified}
+  - {purpose: income, profile: conservative, investor_type: professional}
   - {purpose: income, profile: balanced,     investor_type: retail}
+  - {purpose: income, profile: balanced,     investor_type: qualified}
+  - {purpose: income, profile: balanced,     investor_type: professional}
+  - {purpose: income, profile: aggressive,   investor_type: retail}
+  - {purpose: income, profile: aggressive,   investor_type: qualified}
   - {purpose: income, profile: aggressive,   investor_type: professional}
 
 top_n: 5

@@ -63,20 +63,19 @@ def rank_funds(
     access = _INVESTOR_ACCESS[investor_type]
 
     eligible = df_enriched[df_enriched["investor_level"] <= access].copy()
-    eligible["redemption_days"] = eligible["redemption_days"].fillna(100)
     if eligible.empty:
         return pd.DataFrame()
 
     for feat_spec in sc.cont_features:
         col = feat_spec.col
-        pct = eligible[col].rank(pct=True, na_option="keep").fillna(0.5)
+        pct = eligible[col].rank(pct=True)
         eligible[f"s_{col}"] = pct if feat_spec.ascending else (1.0 - pct)
 
     eligible["s_span"] = 1.0 - np.exp(-sc.span_lambda * eligible["span_days"] / 365.0)
     lam_prazo = sc.liquidity_lambda[purpose]
     eligible["s_liquidity"] = np.exp(-lam_prazo * eligible["redemption_days"])
-    eligible["s_accessibility"] = eligible["min_investment"].apply(
-        lambda x: np.exp(-x / sc.accessibility_scale) if pd.notna(x) else np.nan
+    eligible["s_accessibility"] = np.exp(
+        -eligible["min_investment"] / sc.accessibility_scale
     )
 
     w = sc.weights[purpose][profile]
@@ -90,9 +89,10 @@ def rank_funds(
 
     if investor_type == "retail":
         scale = 1.0 - sc.accessibility_weight
-        eligible["score"] = sum(
-            scale * wi * eligible[sc_col] for wi, sc_col in zip(w, score_cols)
-        ) + sc.accessibility_weight * eligible["s_accessibility"].fillna(0.5)
+        eligible["score"] = (
+            sum(scale * wi * eligible[sc_col] for wi, sc_col in zip(w, score_cols))
+            + sc.accessibility_weight * eligible["s_accessibility"]
+        )
     else:
         eligible["score"] = sum(
             wi * eligible[sc_col] for wi, sc_col in zip(w, score_cols)

@@ -77,8 +77,7 @@ session. The pipeline reads it on every run and raises an error if it is more th
 
 ```bash
 poetry install
-cd airflow
-docker compose -f docker-compose-airflow.yml up
+docker compose -f airflow/docker-compose-airflow.yml up
 ```
 
 Set the `duckdb_path` Airflow Variable to the absolute path of the DuckDB file
@@ -87,6 +86,25 @@ to point to a non-default `config.yaml`.
 
 Enable `fund_ranking_ingest` in the Airflow UI — the remaining three DAGs are
 triggered automatically on each successful run.
+
+### Streamlit dashboard
+
+A read-only Streamlit app browses the published rankings, per-fund detail, and
+validation log directly from the DuckDB file produced by the pipeline.
+
+```bash
+poetry install
+poetry run streamlit run dashboard/app.py
+```
+
+Opens at <http://localhost:8501>. The app reads `data/fund_ranking.duckdb`; run
+the pipeline at least once before launching it.
+
+| Page | What it shows |
+|------|---------------|
+| Rankings | Top-N table per purpose × profile × investor type, with reference-date selector |
+| Fund detail | Header card, trailing returns, risk metrics, and AuM history for a single fund |
+| Validation | Latest `logs.validation_log` entries grouped by gate and severity |
 
 ## Outputs
 
@@ -157,6 +175,13 @@ airflow/
 │   ├── marts_dag.py
 │   └── publish_dag.py
 └── docker-compose-airflow.yml
+dashboard/
+├── app.py                     # Streamlit entry point + navigation
+├── data.py                    # cached DuckDB query helpers
+└── pages/
+    ├── 1_Rankings.py
+    ├── 2_Fund.py
+    └── 3_Validation.py
 data/
 ├── raw/                       # cached downloads (gitignored)
 └── processed/                 # parsed Parquet caches (gitignored)

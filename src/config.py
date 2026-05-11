@@ -80,6 +80,18 @@ class OutputConfig:
     ranking_json: Path
     metrics_parquet: Path
 
+    def with_date(self, ref_date: date) -> "OutputConfig":
+        """Return a copy with ``ref_date`` stamped into each filename."""
+        return OutputConfig(
+            ranking_md=_stamp_date(self.ranking_md, ref_date),
+            ranking_json=_stamp_date(self.ranking_json, ref_date),
+            metrics_parquet=_stamp_date(self.metrics_parquet, ref_date),
+        )
+
+
+def _stamp_date(path: Path, ref_date: date) -> Path:
+    return path.with_name(f"{path.stem}_{ref_date.isoformat()}{path.suffix}")
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -107,8 +119,14 @@ class Settings:
 
     @property
     def quotes_start(self) -> date:
-        """reference_date minus max(windows) months."""
-        return self.reference_date - relativedelta(months=self.max_window_months)
+        """reference_date minus max(windows) months, plus a 1-month buffer.
+
+        The buffer ensures _nav_as_of(cutoff) for the longest window has a
+        search window to find a NAV at or before the cutoff date — without
+        it the cutoff falls exactly on quotes_start and only funds quoting
+        on that exact day get a non-NaN long-window alpha.
+        """
+        return self.reference_date - relativedelta(months=self.max_window_months + 1)
 
     @property
     def aum_lookback_months(self) -> list[str]:
