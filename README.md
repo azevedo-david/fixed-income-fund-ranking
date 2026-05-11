@@ -1,43 +1,65 @@
 # Fixed Income Fund Ranking
 
-One-command pipeline that sources, scores, and ranks Brazilian CVM-registered
-fixed-income funds against a configurable reference date. Designed to run on a
-weekly cadence in production.
+End-to-end pipeline that sources, scores, and ranks Brazilian CVM-registered
+fixed-income funds (RCVM 175) against a configurable reference date. Runs on a
+weekly Airflow schedule and writes human-readable and machine-readable outputs.
 
 [Video walkthrough](https://www.youtube.com/watch?v=Rynx-ReAG5g)
 
-## Quick start
+## Architecture
 
-```bash
-poetry install
-poetry run python run.py
+```mermaid
+graph LR
+    CVM["CVM Dados Abertos\nregistry · quotes · fees"] --> RAW
+    BCB["BCB SGS\nCDI rates"] --> RAW
+    ANBIMA["ANBIMA xlsx\ncharacteristics"] --> RAW
+
+    RAW[(DuckDB\nraw.*)] --> V1[validate_ingestion]
+    V1 --> STG[(DuckDB\nstaging.*)]
+    STG --> V2[validate_staging]
+    V2 --> MRT[(DuckDB\nmarkets.*)]
+    MRT --> V3[validate_marts]
+    V3 --> OUT["output/\nranking.md · ranking.json\nmetrics.parquet"]
+
+    D1["fund_ranking_ingest\n● Mon 6:00 UTC"] -.->|triggers| D2[fund_ranking_stage]
+    D2 -.->|triggers| D3[fund_ranking_marts]
+    D3 -.->|triggers| D4[fund_ranking_publish]
 ```
 
-Output: [`output/ranking.md`](output/ranking.md) — top-5 funds per customer
-segment, with the metrics and score that drove each rank.
+Data flows through three DuckDB layers. Each layer boundary has a validation gate
+that writes results to `logs.validation_log` and fails the DAG on error-severity
+findings before the next layer starts.
 
-## How it works
+## Airflow DAGs
 
-```
-CVM Dados Abertos ──┐
-BCB SGS (CDI)       ├─► universe ─► metrics ─► score & rank ─► output/
-ANBIMA xlsx ────────┘
-```
+Four chained DAGs run sequentially (DuckDB allows one writer at a time). Each triggers the next on success.
 
-| Step | Module | What it does |
-|------|--------|--------------|
-| 1. Universe | `src/compute/universe.py` | Filters CVM registry to active, open-end Renda Fixa funds with AuM ≥ R$15M and ≥ 300 holders |
-| 2. Metrics | `src/compute/metrics.py` | Computes trailing returns, alpha vs CDI, Sharpe, max drawdown, volatility, % months > CDI, CAGR — gross and net of IR |
-| 3. Score & rank | `src/compute/ranking.py` | Converts each metric to a percentile score, applies purpose × profile weights, filters by investor access |
-| 4. Report | `src/compute/report.py` | Writes `output/ranking.md` with methodology and top-N tables |
-| 5. Publish | `src/compute/publish.py` | Serialises the ranking to `output/ranking.json` via a pluggable sink interface |
+| DAG | Schedule | Tasks |
+|-----|----------|-------|
+| `fund_ranking_ingest` | Mon 6:00 UTC | `registro` → `inf_diario` → `cad_fi_hist` → `extrato` → `cdi` → `anbima` → `cleanup` → `validate_ingestion` |
+| `fund_ranking_stage` | triggered | `registry` → `fees` → `daily_quotes` → `cdi_rates` → `anbima` → `validate_staging` |
+| `fund_ranking_marts` | triggered | `universe` → `metrics` → `rankings` → `validate_marts` |
+| `fund_ranking_publish` | triggered | `report` → `publish` |
 
-## Reproducing from scratch
+All tasks are idempotent. Ingest tasks skip sources already loaded today unless `force=True`. Mart tasks delete and rewrite the snapshot for the given `reference_date`. The marts DAG accepts a `reference_date` param (ISO string); defaults to today.
+
+## Validation gates
+
+Each layer boundary has a validation step that writes results to `logs.validation_log` and halts the DAG on error-severity failures.
+
+| Gate | Layer | What is checked |
+|------|-------|-----------------|
+| `validate_ingestion` | raw | Row counts and freshness for all 8 raw tables; null rates on NAV, AuM, shareholders; no negative CDI; known categorical values; CNPJ format; ANBIMA required columns present |
+| `validate_staging` | staging | PK uniqueness and null `fund_cnpj` for all 5 staging tables; trailing-window coverage for quotes and CDI; NAV/AuM/shareholders outliers; no gaps > 10 days in CDI; no negative fees |
+| `validate_marts` | marts | Universe size ≥ 50 funds; metric bounds (no negative vol, drawdown ≤ 0, Sharpe ≤ 100, return in range); `ir_rate` and `investor_level` validity; score in [0, 1]; all configured ranking combos present |
+
+## Setup
 
 ### Prerequisites
 
 - Python 3.13+
 - [Poetry](https://python-poetry.org/docs/#installation)
+- Docker (for Airflow)
 
 ### ANBIMA data (one-time manual download)
 
@@ -48,47 +70,32 @@ The pipeline uses one public ANBIMA file that must be placed in `data/raw/anbima
 | `FUNDOS-175-CARACTERISTICAS-PUBLICO.xlsx` | [data.anbima.com.br](https://data.anbima.com.br/datasets/fundos-175-caracteristicas-publico/detalhes) → Datasets → Fundos 175 Características → Download |
 
 This file is not auto-fetched because the ANBIMA public portal requires a browser
-session. Once placed, the pipeline caches it as Parquet and re-reads from cache on
-every subsequent run.
+session. The pipeline reads it on every run and raises an error if it is more than
+15 days old.
 
-> **ANBIMA API alternative:** ANBIMA exposes the same data via a REST API
-> (`api.anbima.com.br/feed/fundos/v2`). With OAuth2 credentials the xlsx download
-> step can be fully automated — see `src/ingestion/anbima_xlsx.py` for the
-> integration point. Credentials go in `.env` as `ANBIMA_CLIENT_ID` /
-> `ANBIMA_CLIENT_SECRET`.
-
-### Install and run
+### Airflow
 
 ```bash
 poetry install
-
-# Run the full pipeline (fetches CVM + BCB data automatically)
-poetry run python run.py
-
-# Override the reference date without editing config.yaml
-poetry run python run.py --reference-date 2025-12-31
-
-# Re-download all upstream data (CVM inf_diario + BCB CDI) and recompute
-poetry run python run.py --force
+cd airflow
+docker compose -f docker-compose-airflow.yml up
 ```
 
-CVM and BCB data are fetched automatically on the first run and cached under
-`data/raw/`. Re-runs use the cache unless `--force` is passed.
+Set the `duckdb_path` Airflow Variable to the absolute path of the DuckDB file
+(e.g. `/pipeline/data/fund_ranking.duckdb`). Optionally set `config_yaml_path`
+to point to a non-default `config.yaml`.
+
+Enable `fund_ranking_ingest` in the Airflow UI — the remaining three DAGs are
+triggered automatically on each successful run.
 
 ## Outputs
 
-All outputs land in `output/` after every run.
-
 | File | Description |
 |------|-------------|
-| `output/ranking.md` | Top-5 funds per segment + methodology (human-readable) |
+| `output/ranking.md` | Top-N funds per segment + methodology (human-readable) |
 | `output/ranking.json` | Same ranking, machine-readable — fixed data contract |
-| `output/metrics.parquet` | Full metrics for all eligible funds (all 40+ columns) |
+| `output/metrics.parquet` | Full metrics for all eligible funds (40+ columns) |
 | `logs/pipeline.log` | Appended log of every run |
-
-`ranking.json` and `metrics.parquet` are designed to be consumed downstream:
-upload to S3, insert into a database, or serve as an API response by swapping
-the sink in `run.py` — no pipeline code changes required.
 
 ## Configuration
 
@@ -97,58 +104,68 @@ All tunable parameters live in [`config.yaml`](config.yaml):
 | Key | Description |
 |-----|-------------|
 | `reference_date` | Ranking reference date — `null` defaults to today |
-| `universe.*` | AuM, holder, and span-history thresholds |
+| `history_start` | Earliest date to fetch from CVM (default `2021-01-01`) |
+| `universe.*` | AuM, holder count, span, freshness, and sparseness thresholds |
 | `windows` | Trailing return windows (months) |
-| `tax` | IR rates by taxation regime |
+| `tax` | IR rates by taxation regime and exempt-fund keyword list |
 | `scoring` | Feature weights per purpose × profile |
 | `rankings` | List of purpose × profile × investor-type combos to produce |
 | `top_n` | Number of funds to show per segment (default 5) |
 
-## Production path
-
-The pipeline is stateless and config-driven. A minimal weekly cron:
-
-```
-0 8 * * 2  cd /pipeline && poetry run python run.py --force >> output/pipeline.log 2>&1
-```
-
-For a fully automated daily run with no human in the loop:
-
-1. Schedule the cron above (runs after CVM publishes monthly inf_diario files).
-2. Automate the ANBIMA xlsx refresh via the REST API (replace the manual download).
-3. Leave `reference_date: null` in `config.yaml` so the pipeline always ranks
-   against today's date.
-
 ## Project layout
 
 ```
-run.py                   # pipeline entry point
-config.yaml              # all tunable parameters
+run.py                         # single-command pipeline entry point (non-Airflow)
+config.yaml                    # all tunable parameters
 src/
-├── config.py            # Settings dataclass, path constants
-├── compute/
-│   ├── universe.py      # fund universe construction
-│   ├── metrics.py       # return, risk, and tax-layer metrics
-│   ├── returns.py       # trailing returns, monthly compounding, CAGR
-│   ├── risk.py          # volatility, Sharpe, max drawdown
-│   ├── ranking.py       # percentile scoring and ranking
-│   ├── report.py        # markdown report generation
-│   └── publish.py       # data contract + sink abstraction (JSON, S3, DB, …)
-└── ingestion/
-    ├── cvm.py           # CVM Dados Abertos bulk download + parse
-    ├── bcb.py           # BCB SGS CDI series
-    ├── anbima_xlsx.py   # ANBIMA public xlsx parse + cache
-    └── _utils.py        # shared HTTP helpers
+├── config.py                  # Settings dataclass, path constants
+├── storage.py                 # DuckDBWarehouse (upsert, snapshot, temp_view)
+├── schemas.py                 # DDL for all DuckDB tables
+├── ingestion/
+│   ├── cvm.py                 # CVM Dados Abertos bulk download + parse
+│   ├── bcb.py                 # BCB SGS CDI series
+│   ├── anbima_xlsx.py         # ANBIMA public xlsx parse
+│   ├── ingest.py              # orchestrates all ingestion sources
+│   └── _utils.py              # shared HTTP helpers
+├── staging/
+│   ├── registry.py            # fund registry → staging.registry
+│   ├── daily_quotes.py        # inf_diario → staging.daily_quotes
+│   ├── fees.py                # cad_fi_hist → staging.fees
+│   ├── cdi_rates.py           # BCB CDI → staging.cdi_rates
+│   ├── anbima.py              # ANBIMA xlsx → staging.anbima
+│   └── stage.py               # orchestrates all staging transforms
+├── marts/
+│   ├── universe.py            # eligible fund universe
+│   ├── metrics.py             # return, risk, and tax-layer metrics
+│   ├── ranking.py             # percentile scoring and ranking
+│   ├── mart.py                # orchestrates universe → metrics → rankings
+│   └── compute/
+│       ├── returns.py         # trailing returns, monthly compounding, CAGR
+│       ├── risk.py            # volatility, Sharpe, max drawdown
+│       └── tax.py             # IR net-return helpers
+├── publish/
+│   ├── report.py              # markdown report generation
+│   └── publish.py             # ranking.json and metrics.parquet writers
+└── validation/
+    ├── validate_ingestion.py  # raw-layer checks (post-ingest gate)
+    ├── validate_staging.py    # staging-layer checks (post-stage gate)
+    └── validate_marts.py      # marts-layer checks (post-compute gate)
+airflow/
+├── dags/
+│   ├── ingest_dag.py
+│   ├── staging_dag.py
+│   ├── marts_dag.py
+│   └── publish_dag.py
+└── docker-compose-airflow.yml
 data/
-├── raw/                 # cached downloads (gitignored)
-│   ├── cvm/             # CVM inf_diario_fi ZIPs
-│   ├── bcb/             # BCB CDI JSON
-│   └── anbima/          # ANBIMA xlsx (manual download)
-└── processed/           # parsed Parquet caches (gitignored)
+├── raw/                       # cached downloads (gitignored)
+└── processed/                 # parsed Parquet caches (gitignored)
 output/
-├── ranking.md           # top-5 ranking report
-├── ranking.json         # machine-readable ranking
-└── metrics.parquet      # full metrics table
-logs/
-└── pipeline.log         # appended log of every run
+├── ranking.md
+├── ranking.json
+└── metrics.parquet
+tests/
+├── test_compute.py            # unit tests: returns, risk, metrics compute layer
+├── test_storage.py            # DuckDBWarehouse write-pattern tests
+└── test_validation.py         # validation check tests
 ```

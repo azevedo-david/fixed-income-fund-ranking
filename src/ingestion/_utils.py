@@ -16,6 +16,19 @@ logger = logging.getLogger(__name__)
 CSV_READ_KWARGS = dict(sep=";", encoding="latin-1", low_memory=False)
 
 
+def yyyymm_range(start: _date, end: _date) -> list[str]:
+    """Inclusive list of YYYYMM strings between two dates."""
+    out: list[str] = []
+    y, m = start.year, start.month
+    while (y, m) <= (end.year, end.month):
+        out.append(f"{y:04d}{m:02d}")
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+    return out
+
+
 def today_stamp() -> str:
     """YYYYMMDD string used to version snapshot caches."""
     return _date.today().strftime("%Y%m%d")
@@ -26,13 +39,6 @@ def snapshot_path(
 ) -> Path:
     """Path for today's snapshot of a dataset (e.g. ``cad_fi_taxa_20260501.parquet``)."""
     return directory / f"{stem}_{today or today_stamp()}{ext}"
-
-
-def purge_old_snapshots(directory: Path, stem: str, ext: str, keep: Path) -> None:
-    """Delete all ``{stem}_*{ext}`` files in ``directory`` except ``keep``."""
-    for p in directory.glob(f"{stem}_*{ext}"):
-        if p.resolve() != keep.resolve():
-            p.unlink(missing_ok=True)
 
 
 def download(url: str, dest: Path, force: bool = False, timeout: int = 120) -> Path:

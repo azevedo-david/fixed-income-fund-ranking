@@ -1,20 +1,22 @@
-"""Structured ranking output: typed data contract, payload builder, and sink abstraction."""
+"""Structured ranking output: typed data contract, payload builder, and sinks."""
 
 from __future__ import annotations
 
 import json
 import logging
 import math
-from datetime import datetime, timezone
+from dataclasses import replace as _replace
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, TypedDict
 
-logger = logging.getLogger(__name__)
-
 import pandas as pd
 
-from ..config import Settings
-from .ranking import rank_funds
+from ..config import RankingCombo, Settings
+from ..storage import DuckDBWarehouse
+from ._utils import load_rankings, universe_size
+
+logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = "1.1"
 
@@ -44,8 +46,8 @@ class SegmentResult(TypedDict):
 
 class RankingPayload(TypedDict):
     schema_version: str
-    generated_at: str  # ISO-8601
-    reference_date: str  # YYYY-MM-DD
+    generated_at: str
+    reference_date: str
     universe_size: int
     segments: list[SegmentResult]
 
@@ -54,7 +56,6 @@ Sink = Callable[[RankingPayload], None]
 
 
 def _coerce(v: Any) -> Any:
-    """NaN → None; keep everything else as-is."""
     if isinstance(v, float) and math.isnan(v):
         return None
     return v
@@ -81,18 +82,15 @@ def _fund_entry(rank: int, cnpj: str, subclass_id: Any, row: pd.Series) -> FundE
     )
 
 
-def build_payload(metrics_df: pd.DataFrame, settings: Settings) -> RankingPayload:
-    """Build the canonical ``RankingPayload`` from ``metrics_df``.
-
-    This is the single authoritative representation of the ranking result.
-    All sinks consume this dict — never raw DataFrames.
-    """
+def build_payload(
+    rankings: list[tuple[RankingCombo, pd.DataFrame]],
+    universe_size: int,
+    settings: Settings,
+) -> RankingPayload:
+    """Build the canonical ``RankingPayload`` from pre-ranked data."""
     segments: list[SegmentResult] = []
 
-    for combo in settings.rankings:
-        ranked = rank_funds(
-            metrics_df, combo.purpose, settings, combo.profile, combo.investor_type
-        )
+    for combo, ranked in rankings:
         funds: list[FundEntry] = []
         for rank_i, (idx, row) in enumerate(ranked.head(settings.top_n).iterrows(), 1):
             cnpj, subclass_id = idx
@@ -112,7 +110,7 @@ def build_payload(metrics_df: pd.DataFrame, settings: Settings) -> RankingPayloa
         schema_version=SCHEMA_VERSION,
         generated_at=datetime.now(timezone.utc).isoformat(),
         reference_date=str(settings.reference_date),
-        universe_size=len(metrics_df),
+        universe_size=universe_size,
         segments=segments,
     )
 
@@ -133,3 +131,36 @@ def publish(payload: RankingPayload, sinks: list[Sink]) -> None:
     """Deliver ``payload`` to every registered sink in order."""
     for sink in sinks:
         sink(payload)
+
+
+def write_json(
+    db: DuckDBWarehouse,
+    reference_date: date,
+    settings: Settings,
+) -> None:
+    """Write ranking.json to settings.output.ranking_json."""
+    settings = _replace(settings, reference_date=reference_date)
+    rankings = load_rankings(db, reference_date, settings)
+    n_funds = universe_size(db, reference_date)
+    payload = build_payload(rankings, n_funds, settings)
+    publish(payload, sinks=[local_json_sink(settings.output.ranking_json)])
+    logger.info("publish: ranking.json written for %s", reference_date)
+
+
+def write_parquet(
+    db: DuckDBWarehouse,
+    reference_date: date,
+    settings: Settings,
+) -> None:
+    """Write metrics.parquet to settings.output.metrics_parquet."""
+    metrics_df = db.execute(
+        "SELECT * FROM marts.metrics WHERE reference_date = ?", [reference_date]
+    ).df()
+    path = settings.output.metrics_parquet
+    path.parent.mkdir(parents=True, exist_ok=True)
+    metrics_df.to_parquet(path, index=False)
+    logger.info(
+        "publish: metrics.parquet written for %s (%d rows)",
+        reference_date,
+        len(metrics_df),
+    )

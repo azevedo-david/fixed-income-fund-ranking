@@ -12,6 +12,7 @@ data/
 
 # Generated pipeline outputs
 output/
+_output/
 logs/
 
 # Private files

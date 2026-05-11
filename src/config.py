@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -22,8 +21,6 @@ OUTPUT_DIR = PROJECT_ROOT / "output"
 LOGS_DIR = PROJECT_ROOT / "logs"
 
 CVM_BASE_URL = "https://dados.cvm.gov.br/dados/FI"
-ANBIMA_BASE_URL = "https://api.anbima.com.br/feed/fundos/v2"
-ANBIMA_TOKEN_URL = "https://api.anbima.com.br/oauth/access-token"
 BCB_SGS_URL = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.12/dados"
 
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config.yaml"
@@ -35,6 +32,8 @@ class UniverseConfig:
     aum_lookback_days: int
     min_aum: float
     min_cotistas: int
+    max_quote_staleness_days: int
+    min_obs_ratio: float
 
 
 @dataclass(frozen=True)
@@ -84,6 +83,7 @@ class OutputConfig:
 
 @dataclass(frozen=True)
 class Settings:
+    history_start: date
     reference_date: date
     force_download: bool
     universe: UniverseConfig
@@ -94,9 +94,7 @@ class Settings:
     rankings: list[RankingCombo]
     top_n: int
     output: OutputConfig
-
-    anbima_client_id: str | None = None
-    anbima_client_secret: str | None = None
+    db_path: Path = PROJECT_ROOT / "data" / "fund_ranking.duckdb"
 
     @property
     def max_window_months(self) -> int:
@@ -131,6 +129,17 @@ class Settings:
         with open(path) as f:
             cfg: dict[str, Any] = yaml.safe_load(f)
 
+        universe_raw = cfg["universe"]
+        universe = UniverseConfig(**universe_raw)
+        if universe.aum_lookback_days <= 0:
+            raise ValueError(
+                f"universe.aum_lookback_days must be positive, got {universe.aum_lookback_days}"
+            )
+
+        windows = {k: int(v) for k, v in cfg["windows"].items()}
+        if not windows:
+            raise ValueError("windows dict must not be empty")
+
         scoring_raw = cfg["scoring"]
         scoring = ScoringConfig(
             cont_features=[FeatureSpec(**f) for f in scoring_raw["cont_features"]],
@@ -162,10 +171,11 @@ class Settings:
         )
 
         return cls(
+            history_start=_parse_date(cfg.get("history_start", "2021-01-01")),
             reference_date=reference_date,
             force_download=bool(cfg.get("force_download", False)),
-            universe=UniverseConfig(**cfg["universe"]),
-            windows={k: int(v) for k, v in cfg["windows"].items()},
+            universe=universe,
+            windows=windows,
             tax=TaxConfig(
                 cdi_ir_rate=cfg["tax"]["cdi_ir_rate"],
                 rates_by_taxation=cfg["tax"]["rates_by_taxation"],
@@ -177,8 +187,6 @@ class Settings:
             rankings=[RankingCombo(**r) for r in cfg["rankings"]],
             top_n=int(cfg["top_n"]),
             output=output,
-            anbima_client_id=os.getenv("ANBIMA_CLIENT_ID") or None,
-            anbima_client_secret=os.getenv("ANBIMA_CLIENT_SECRET") or None,
         )
 
 
